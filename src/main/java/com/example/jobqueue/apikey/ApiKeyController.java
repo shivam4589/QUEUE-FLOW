@@ -12,11 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Admin endpoints for managing per-client API keys.
- * These routes are already protected by {@code AdminWriteFilter} (HTTP Basic) for write operations
- * when {@code jobqueue.admin.password} is set — no additional auth is needed here.
- */
+/** Admin endpoints for managing per-client API keys. */
 @RestController
 @RequestMapping("/api/admin/keys")
 public class ApiKeyController {
@@ -27,26 +23,19 @@ public class ApiKeyController {
         this.service = service;
     }
 
-    /**
-     * Creates a new API key.
-     * <strong>The raw key is returned once in this response and cannot be retrieved again.</strong>
-     */
+    /** Creates a new API key. The raw token is returned once in the response. */
     @PostMapping
     public ResponseEntity<CreateApiKeyResponse> create(@Valid @RequestBody CreateApiKeyRequest request) {
         CreateApiKeyResponse response = service.create(request.clientId(), request.description());
         return ResponseEntity.status(201).body(response);
     }
 
-    /** Lists all API keys (hashes and metadata only — never raw keys). */
     @GetMapping
     public List<ApiKey> list() {
         return service.list();
     }
 
-    /**
-     * Disables an API key. The key record is kept for audit; it will simply stop authenticating.
-     * Returns 404 if the key does not exist.
-     */
+    /** Disables an API key so it can no longer authenticate. */
     @PostMapping("/{id}/disable")
     public ResponseEntity<ApiKey> disable(@PathVariable UUID id) {
         return service.disable(id)
@@ -54,10 +43,6 @@ public class ApiKeyController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    /**
-     * Permanently deletes an API key.
-     * Returns 404 if the key does not exist.
-     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         return service.delete(id)

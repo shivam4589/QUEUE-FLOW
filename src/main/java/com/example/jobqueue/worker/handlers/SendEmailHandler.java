@@ -24,7 +24,6 @@ public class SendEmailHandler implements JobHandler {
         String to = job.payload().path("to").asText("unknown");
         log.info("Sending email to {} (job {})", to, job.id());
         Thread.sleep(300); // simulate work
-        // Return a simple result showing which address was targeted.
         return JsonNodeFactory.instance.objectNode().put("sentTo", to);
     }
 }

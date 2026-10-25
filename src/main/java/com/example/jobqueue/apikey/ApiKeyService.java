@@ -22,10 +22,6 @@ public class ApiKeyService {
         this.repository = repository;
     }
 
-    /**
-     * Generates a new cryptographically random API key, stores its hash, and returns the raw key
-     * alongside the stored record. The raw key is never stored and cannot be recovered later.
-     */
     public CreateApiKeyResponse create(String clientId, String description) {
         byte[] bytes = new byte[KEY_BYTES];
         RANDOM.nextBytes(bytes);
@@ -36,10 +32,6 @@ public class ApiKeyService {
         return new CreateApiKeyResponse(stored, rawKey);
     }
 
-    /**
-     * Validates an incoming raw key: hashes it and looks it up in the database.
-     * Returns the matching enabled {@link ApiKey}, or empty if the key is unknown or disabled.
-     */
     public Optional<ApiKey> authenticate(String rawKey) {
         if (rawKey == null || rawKey.isBlank()) {
             return Optional.empty();

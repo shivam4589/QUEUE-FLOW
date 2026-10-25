@@ -25,7 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
 @SpringBootTest
-class PhaseFeaturesRepositoryTest {
+class TypeConcurrencyAndResultTest {
 
     @Container
     @ServiceConnection

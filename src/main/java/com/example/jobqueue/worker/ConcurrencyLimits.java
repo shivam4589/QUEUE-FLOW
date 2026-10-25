@@ -3,12 +3,7 @@ package com.example.jobqueue.worker;
 import java.util.Collections;
 import java.util.Map;
 
-/**
- * Encapsulates the per-job-type concurrency limits read from
- * {@code jobqueue.worker.type-concurrency} and serialises them for the claim query.
- *
- * <p>A type not present in the map has no limit (unlimited concurrency).
- */
+/** Per-job-type concurrency limits passed into the claim query. */
 public final class ConcurrencyLimits {
 
     private final Map<String, Integer> limits;
@@ -25,18 +20,11 @@ public final class ConcurrencyLimits {
         return limits;
     }
 
-    /**
-     * Returns the limit for a type, or -1 if there is no limit configured.
-     */
     public int limitFor(String type) {
         return limits.getOrDefault(type, -1);
     }
 
-    /**
-     * Serialises limits as a simple JSON object string suitable for passing to PostgreSQL as a
-     * JSONB parameter: {@code {"SEND_EMAIL":3,"SLOW":1}}.
-     * Returns {@code "{}"} when no limits are configured.
-     */
+    /** Formats limits as JSONB string, e.g. {"SEND_EMAIL":3,"SLOW":1}. */
     public String toJsonb() {
         if (limits.isEmpty()) {
             return "{}";

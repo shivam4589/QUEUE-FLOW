@@ -13,19 +13,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Validates the {@code X-Api-Key} header on every request when API key auth is enabled
- * ({@code jobqueue.apikeys.enabled=true}).
- *
- * <p>On success: stores the resolved {@link ApiKey} as a request attribute under the name
- * {@value #ATTR_API_KEY}. Downstream code (e.g. {@code JobController}) can read the
- * {@code clientId} from there without touching the database again.
- *
- * <p>On failure: responds with {@code 401 Unauthorized} and a JSON body.
- *
- * <p>{@code last_used_at} is updated asynchronously so the response is never delayed by it.
- *
- * <p>This filter runs <em>after</em> {@code AdminWriteFilter} (which uses the existing HTTP Basic
- * admin password). The two are independent — you can enable either or both.
+ * Validates X-Api-Key on /api requests when jobqueue.apikeys.enabled=true.
+ * On success, attaches the ApiKey to the request under "jobqueue.apiKey".
  */
 @Component
 @ConditionalOnProperty(name = "jobqueue.apikeys.enabled", havingValue = "true")

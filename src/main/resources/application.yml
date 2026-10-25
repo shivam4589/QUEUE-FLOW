@@ -21,18 +21,13 @@ management:
 jobqueue:
   worker:
     enabled: false
-    # Per-job-type concurrency limits (optional). Types not listed have no limit.
-    # Example:
     # type-concurrency:
     #   SEND_EMAIL: 3
     #   SLOW: 1
 
-  # API key authentication (optional). When enabled, every request must carry a valid X-Api-Key header.
-  # Manage keys via POST /api/admin/keys (protected by the admin password, if set).
   # apikeys:
   #   enabled: true
 
-  # Admin HTTP Basic password for write operations (optional).
   # admin:
   #   password: ${JOBQUEUE_ADMIN_PASSWORD:}
 

@@ -19,10 +19,7 @@ public record Job(
         UUID scheduleId,
         String idempotencyKey,
         boolean cancelRequested,
-        /** Structured JSON result stored by the handler on success. Null if none was returned. */
         JsonNode result,
-        /** Structured JSON error detail stored by the handler when the job goes DEAD. */
         JsonNode errorDetail,
-        /** Client that submitted this job via an API key. Null for un-keyed submissions. */
         String clientId) {
 }
