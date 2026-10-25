@@ -68,8 +68,9 @@ class WorkerEndToEndTest {
         }
 
         @Override
-        public void handle(Job job) {
+        public com.fasterxml.jackson.databind.JsonNode handle(Job job) {
             runs.computeIfAbsent(job.id(), k -> new AtomicInteger()).incrementAndGet();
+            return null;
         }
     }
 
@@ -83,11 +84,12 @@ class WorkerEndToEndTest {
         }
 
         @Override
-        public void handle(Job job) {
+        public com.fasterxml.jackson.databind.JsonNode handle(Job job) {
             int run = runs.computeIfAbsent(job.id(), k -> new AtomicInteger()).incrementAndGet();
             if (run <= 2) {
                 throw new IllegalStateException("flaky failure #" + run);
             }
+            return null;
         }
     }
 

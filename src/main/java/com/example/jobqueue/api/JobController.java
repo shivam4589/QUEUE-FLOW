@@ -1,8 +1,11 @@
 package com.example.jobqueue.api;
 
+import com.example.jobqueue.apikey.ApiKey;
+import com.example.jobqueue.apikey.ApiKeyFilter;
 import com.example.jobqueue.domain.Job;
 import com.example.jobqueue.domain.JobAttempt;
 import com.example.jobqueue.domain.JobStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -31,12 +34,16 @@ public class JobController {
     /**
      * Optional Idempotency-Key header. First request: 201 Created. The same key with the same request again:
      * 200 OK with the original job and "Idempotent-Replayed: true". The same key with a different request: 422.
+     *
+     * <p>If API key authentication is active, the resolved {@code clientId} is stored on the job.
      */
     @PostMapping
     public ResponseEntity<Job> submit(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-            @Valid @RequestBody SubmitJobRequest request) {
-        JobService.SubmitResult result = service.submit(request, idempotencyKey);
+            @Valid @RequestBody SubmitJobRequest request,
+            HttpServletRequest httpRequest) {
+        String clientId = resolveClientId(httpRequest);
+        JobService.SubmitResult result = service.submit(request, idempotencyKey, clientId);
         Job job = result.job();
         URI location = URI.create("/api/jobs/" + job.id());
         if (result.created()) {
@@ -78,11 +85,18 @@ public class JobController {
     @GetMapping
     public ResponseEntity<List<Job>> list(@RequestParam(required = false) JobStatus status,
                                           @RequestParam(required = false) String type,
+                                          @RequestParam(required = false) String clientId,
                                           @RequestParam(defaultValue = "50") int limit,
                                           @RequestParam(defaultValue = "0") int offset) {
-        JobService.PagedJobs page = service.list(status, type, limit, offset);
+        JobService.PagedJobs page = service.list(status, type, clientId, limit, offset);
         return ResponseEntity.ok()
                 .header("X-Total-Count", String.valueOf(page.total()))
                 .body(page.items());
+    }
+
+    /** Reads the resolved API key from the request attribute set by {@link ApiKeyFilter}. */
+    private static String resolveClientId(HttpServletRequest request) {
+        Object attr = request.getAttribute(ApiKeyFilter.ATTR_API_KEY);
+        return attr instanceof ApiKey key ? key.clientId() : null;
     }
 }

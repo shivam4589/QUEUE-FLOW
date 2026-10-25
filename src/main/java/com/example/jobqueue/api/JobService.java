@@ -47,7 +47,7 @@ public class JobService {
     public record CancelResult(Job job, boolean immediate) {
     }
 
-    public SubmitResult submit(SubmitJobRequest req, String idempotencyKey) {
+    public SubmitResult submit(SubmitJobRequest req, String idempotencyKey, String clientId) {
         int priority = req.priority() != null ? req.priority() : DEFAULT_PRIORITY;
         int delaySeconds = req.delaySeconds() != null ? req.delaySeconds() : 0;
         int maxAttempts = req.maxAttempts() != null ? req.maxAttempts() : DEFAULT_MAX_ATTEMPTS;
@@ -56,12 +56,12 @@ public class JobService {
         String key = normalizeKey(idempotencyKey);
         if (key == null) {
             return new SubmitResult(
-                    repository.insert(id, req.type(), req.payload(), priority, delaySeconds, maxAttempts), true);
+                    repository.insert(id, req.type(), req.payload(), priority, delaySeconds, maxAttempts, clientId), true);
         }
 
         String hash = fingerprint(req.type(), req.payload(), priority, delaySeconds, maxAttempts);
         Optional<Job> created = repository.insertIdempotent(
-                id, key, hash, req.type(), req.payload(), priority, delaySeconds, maxAttempts);
+                id, key, hash, req.type(), req.payload(), priority, delaySeconds, maxAttempts, clientId);
         if (created.isPresent()) {
             return new SubmitResult(created.get(), true);
         }
@@ -75,15 +75,25 @@ public class JobService {
         return new SubmitResult(existing.job(), false);
     }
 
+    /** Backwards-compatible overload for internal callers (e.g. schedule runner) that have no clientId. */
+    public SubmitResult submit(SubmitJobRequest req, String idempotencyKey) {
+        return submit(req, idempotencyKey, null);
+    }
+
     public Job get(UUID id) {
         return repository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
     }
 
-    public PagedJobs list(JobStatus status, String type, int limit, int offset) {
+    public PagedJobs list(JobStatus status, String type, String clientId, int limit, int offset) {
         int safeLimit = Math.min(Math.max(limit, 1), 200);
         int safeOffset = Math.max(offset, 0);
-        List<Job> items = repository.list(status, type, safeLimit, safeOffset);
-        return new PagedJobs(items, repository.count(status, type));
+        List<Job> items = repository.list(status, type, clientId, safeLimit, safeOffset);
+        return new PagedJobs(items, repository.count(status, type, clientId));
+    }
+
+    /** Backwards-compatible overload without clientId filter. */
+    public PagedJobs list(JobStatus status, String type, int limit, int offset) {
+        return list(status, type, null, limit, offset);
     }
 
     public List<JobAttempt> attempts(UUID id) {

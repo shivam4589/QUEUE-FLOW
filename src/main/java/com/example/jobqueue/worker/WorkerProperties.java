@@ -1,5 +1,6 @@
 package com.example.jobqueue.worker;
 
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -17,6 +18,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *                                       keep it well below half of the lock timeout
  * jobqueue.worker.listen-enabled        wake workers through PostgreSQL LISTEN/NOTIFY instead of waiting for the poll
  * jobqueue.worker.listen-safety-poll-ms longest an idle worker sleeps while LISTEN is connected (a safety net)
+ * jobqueue.worker.type-concurrency      optional map of job-type → max simultaneous RUNNING jobs of that type;
+ *                                       types not listed here have no concurrency limit
  */
 @ConfigurationProperties(prefix = "jobqueue.worker")
 public record WorkerProperties(
@@ -30,5 +33,6 @@ public record WorkerProperties(
         @DefaultValue("5000") long schedulerIntervalMs,
         @DefaultValue("10000") long heartbeatIntervalMs,
         @DefaultValue("true") boolean listenEnabled,
-        @DefaultValue("5000") long listenSafetyPollMs) {
+        @DefaultValue("5000") long listenSafetyPollMs,
+        Map<String, Integer> typeConcurrency) {
 }
