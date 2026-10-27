@@ -16,6 +16,9 @@ Clients submit jobs over REST. A fleet of worker containers claims them safely (
 - **Instant wake-ups** through PostgreSQL `LISTEN/NOTIFY`: a new, retried or delayed job starts within milliseconds instead of waiting for the next poll. Polling stays as a fallback.
 - **Recurring jobs**: cron schedules (5- or 6-field cron, time zones), fired exactly once even with many worker containers ticking at the same time.
 - **Idempotency keys**: repeat a submit with the same `Idempotency-Key` and get the original job back instead of a duplicate.
+- **Job results**: a handler can return a result that is stored with the job and shown in the API and the dashboard. The built-in `GENERATE_REPORT` job type builds a summary of the queue itself.
+- **Concurrency limits per job type**: cap how many jobs of one type run at once across all workers, and the cap is exact even when many workers claim at the same moment.
+- **Per-client API keys**: each application gets its own key that can submit jobs; every job records who submitted it, keys can be disabled, and idempotency keys are scoped per client.
 - **Data retention**: old finished jobs (and their attempt history) are deleted automatically in small batches.
 - **Priorities, delayed jobs, cancellation of waiting *and running* jobs** (a running job is interrupted at the worker's next heartbeat), and a full per-attempt audit trail (worker, timing, error).
 - **React dashboard**: live stats, paged and filterable job list, job details with attempts, create/cancel/retry, schedules page.
@@ -136,13 +139,16 @@ The job's attempt history then shows the lost attempt (`Worker lost: lock expire
 | `DELETE` | `/api/jobs/{id}` | Cancel a job. `PENDING`: cancelled at once (`200`). `RUNNING`: cancellation is requested and the worker interrupts the handler within one heartbeat (`202`, the job shows `cancelRequested: true` until it stops). `409` if it already finished |
 | `POST` | `/api/jobs/{id}/retry` | Re-queue a `DEAD` job with a fresh attempt budget |
 | `GET` | `/api/stats` | Counts per status, jobs finished in the last minute, longest wait |
+| `GET`, `POST`, `DELETE` | `/api/limits`, `/api/limits/{type}` | List, set (`{"type","maxConcurrent"}`) or remove a concurrency limit |
+| `POST` | `/api/clients` | Create an API client. The response contains its key, shown only once |
+| `GET` | `/api/clients` | List API clients (admin login). `POST /api/clients/{id}/disable` and `/enable` switch a key off or on |
 | `POST` | `/api/schedules` | Create a recurring job (5- or 6-field cron, or `@daily` style macros; IANA time zone) |
 | `GET` | `/api/schedules`, `/api/schedules/{id}` | List or read schedules |
 | `POST` | `/api/schedules/{id}/pause`, `/resume`, `/trigger` | Pause, resume, or run once now |
 | `DELETE` | `/api/schedules/{id}` | Delete a schedule (jobs it already created are kept) |
 | `GET` | `/actuator/health`, `/actuator/prometheus` | Health and metrics |
 
-Submit body: `type` and `payload` are required; `priority` (1-10, default 5), `delaySeconds` (default 0) and `maxAttempts` (1-20, default 5) are optional. Errors are returned as RFC 7807 problem details. When `JOBQUEUE_ADMIN_PASSWORD` is set, every `POST`, `PUT`, `PATCH` and `DELETE` under `/api` needs HTTP Basic credentials, while reading stays open (this is how the public demo is protected).
+Submit body: `type` and `payload` are required; `priority` (1-10, default 5), `delaySeconds` (default 0) and `maxAttempts` (1-20, default 5) are optional. Errors are returned as RFC 7807 problem details. When `JOBQUEUE_ADMIN_PASSWORD` is set, every `POST`, `PUT`, `PATCH` and `DELETE` under `/api` needs HTTP Basic credentials, while reading stays open (this is how the public demo is protected). Instead of the admin login, an API client can submit jobs with `Authorization: Bearer <key>`; a key can do nothing else, and listing the clients needs the admin login.
 
 ## How it works
 
@@ -188,6 +194,18 @@ The key is stored on the job behind a unique index, and the insert uses `ON CONF
 ### Data retention
 
 A background task deletes finished jobs older than the configured limits (7 days for `SUCCEEDED`, 30 days for `DEAD` and `CANCELLED` by default), oldest first, in batches of 1,000 using `SKIP LOCKED`. Attempt history is removed together with its job; `PENDING` and `RUNNING` jobs are never touched. This keeps the table small, which also matters on small hosted databases.
+
+### Job results
+
+A handler that implements `ResultJobHandler` returns a JSON result; the worker stores it in the same statement that marks the job `SUCCEEDED`, so a job never shows as finished without its result. Results over 64 KB are replaced by a short summary. `SEND_EMAIL` returns a delivery receipt, `SLOW` the time it slept, and `GENERATE_REPORT` a snapshot of the queue (jobs per status and per type, longest wait).
+
+### Concurrency limits
+
+Limits live in a small table. While none exist, claiming is the plain `SKIP LOCKED` query and costs nothing extra. Once any limit exists, workers claim inside a short transaction that first takes a PostgreSQL advisory lock, then excludes every job type that already has `max_concurrent` jobs running. Because claims are serialised and each commits before the next starts, two workers can never both take the last free slot; a test claims from 8 threads at once and checks the limit holds exactly. Other worker processes notice a new limit within about 2 seconds.
+
+### API clients
+
+A key is 256 random bits (`jq_...`); only its SHA-256 hash is stored, so a database leak does not reveal keys and a lost key cannot be recovered, only replaced. A filter in front of the API accepts either the admin login or a key; a key may only `POST /api/jobs`, and the job is stamped with the client that sent it. Idempotency keys are scoped per client by a unique index on (client, key), so two clients can reuse the same key safely.
 
 ### Delivery guarantees
 
@@ -268,7 +286,7 @@ mvn test        # Docker must be running: integration tests start real PostgreSQ
 ```
 
 - Unit tests: backoff policy, cron parsing and time zones.
-- Integration tests against PostgreSQL (Testcontainers): the REST API, claiming under concurrency, worker end-to-end (exactly-once, retries, dead letters), retry scheduling and crash recovery, the lock heartbeat (a job longer than the lock timeout runs once), `LISTEN/NOTIFY` wake-ups, data retention, cancel/retry/stats/paging/CORS, cancelling running jobs, recurring schedules (including simultaneous ticks), idempotency keys (including a race), the admin login filter, and the metrics endpoint.
+- Integration tests against PostgreSQL (Testcontainers): the REST API, claiming under concurrency, worker end-to-end (exactly-once, retries, dead letters), retry scheduling and crash recovery, the lock heartbeat (a job longer than the lock timeout runs once), `LISTEN/NOTIFY` wake-ups, data retention, cancel/retry/stats/paging/CORS, cancelling running jobs, concurrency limits (exactness under concurrency), job results, API keys, recurring schedules (including simultaneous ticks), idempotency keys (including a race), the admin login filter, and the metrics endpoint.
 - GitHub Actions runs the whole suite and builds the Docker images on every push.
 
 ## Design decisions and limitations
@@ -278,7 +296,9 @@ mvn test        # Docker must be running: integration tests start real PostgreSQ
 - **Cancelling a running job is cooperative.** The worker interrupts the handler thread, so handlers that sleep or block on I/O stop promptly, but a handler that ignores interrupts (for example a tight CPU loop) cannot be stopped and finishes normally. A cancel request takes effect within one heartbeat interval.
 - **`LISTEN/NOTIFY` needs a direct database connection.** Behind a transaction-mode pooler it cannot work and the workers fall back to polling, so jobs start a little later but nothing breaks.
 - **Recurring jobs:** missed runs are not replayed, and a new run can start while the previous one is still running. Schedules cannot fire more often than every 10 seconds.
-- **Idempotency keys are global** rather than per client, and are forgotten when retention deletes the job.
+- **Idempotency keys are scoped per API client** (anonymous submissions share one scope) and are forgotten when retention deletes the job.
+- **Concurrency limits trade some claim throughput for exactness.** While any limit exists, claims are serialised by a short database lock. Limits are per job type, not per client or per queue.
+- **API keys are minimal.** They can only submit jobs, there are no per-client quotas or rate limits, and reading the dashboard and jobs stays public.
 - **Retention deletes data by design.** Raise the limits (or disable it) if you need a longer history.
 - **Priorities are strict**, so a steady stream of high-priority jobs can starve low-priority ones.
 - **Authentication is minimal.** There is one optional admin login for write requests, no users or roles. CORS is limited to localhost by default.
@@ -294,8 +314,10 @@ src/main/java/com/example/jobqueue/
   worker/     WorkerLoop, WakeSignal, JobNotifier, LockHeartbeat, StuckJobReaper, BackoffPolicy, JobHandler and demo handlers
   schedule/   cron schedules: repository, service, scheduler, controller
   retention/  cleanup of old finished jobs
+  limits/     concurrency limits per job type
+  clients/    API clients and keys
   metrics/    QueueMetrics (Prometheus gauges)
-src/main/resources/db/migration/   Flyway migrations V1-V5
+src/main/resources/db/migration/   Flyway migrations V1-V9
 src/test/java/                     unit and integration tests
 frontend/                          React + Vite dashboard
 monitoring/                        Prometheus config, Grafana provisioning and dashboard
@@ -319,4 +341,5 @@ Dockerfile.deploy                  single-container image for hosting
 - [x] Public demo (Render + Neon free tier)
 - [x] Lock heartbeat, `LISTEN/NOTIFY` wake-ups, data retention
 - [x] Cooperative cancellation of running jobs
-- [ ] Ideas: per-job-type concurrency limits, job results, per-client API keys
+- [x] Per-job-type concurrency limits, job results, per-client API keys
+- [ ] Ideas: per-client quotas and rate limits, results for scheduled jobs in the schedule view, a real e-mail or webhook job type

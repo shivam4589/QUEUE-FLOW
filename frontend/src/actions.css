@@ -23,3 +23,14 @@
 .schedules-table tbody tr { cursor: default; }
 .schedules-table tbody tr:hover { background: #fbfaff; }
 .schedule-note { margin: 0 0 16px; border: 1px solid #e5e1f6; border-radius: 8px; background: #f8f6ff; padding: 10px 12px; color: #5e4cb3; font-size: 11px; }
+
+/* concurrency limits page */
+.limit-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-top: 1px solid #f0f1f5; padding: 14px 19px; }
+.limit-form .input-control { width: 220px; }
+.limit-form .input-control.narrow { width: 110px; }
+
+/* API clients page */
+.status-disabled { background: #f0f1f4; color: #828694; }
+.key-note { word-break: break-all; }
+.key-note code { font-family: 'DM Mono', monospace; font-size: 11px; color: #3d3480; }
+.key-note .button { margin-left: 8px; }

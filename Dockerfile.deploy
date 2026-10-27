@@ -1,7 +1,7 @@
 # One image that serves the dashboard, the API and (when JOBQUEUE_WORKER_ENABLED=true) the workers.
 # Used for simple single-service hosting such as Render. Local development keeps using ./Dockerfile.
 
-# ---- 1. build the React dashboard ----
+# ---  build the React dashboard 
 FROM node:22-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
@@ -10,7 +10,7 @@ COPY frontend/index.html frontend/vite.config.js ./
 COPY frontend/src ./src
 RUN npm run build
 
-# ---- 2. build the Spring Boot jar, with the dashboard packaged as static files ----
+# ----  build the Spring Boot jar, with the dashboard packaged as static files --
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY pom.xml .
@@ -19,7 +19,7 @@ COPY src ./src
 COPY --from=web /web/dist ./src/main/resources/static
 RUN mvn -q -B package -DskipTests
 
-# ---- 3. run ----
+# -- 3. run --
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 RUN useradd --system --no-create-home appuser

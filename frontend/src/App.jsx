@@ -258,7 +258,7 @@ function SubmitModal({ onClose, onSubmitted }) {
           <label className="field-label" htmlFor="job-type">Job type</label>
           <input id="job-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} placeholder="e.g. SEND_EMAIL" />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
+            {['SEND_EMAIL', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
             ))}
           </div>
@@ -363,7 +363,7 @@ function ScheduleModal({ onClose, onCreated }) {
           <label className="field-label delay-label" htmlFor="schedule-type">Job type</label>
           <input id="schedule-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
+            {['SEND_EMAIL', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
             ))}
           </div>
@@ -496,6 +496,12 @@ function JobDrawer({ job, attempts, attemptsLoading, attemptsError, actionBusy, 
           <div className="section-title"><h3>Payload</h3><span>JSON</span></div>
           <pre className="json-block">{JSON.stringify(job.payload, null, 2) ?? 'null'}</pre>
         </div>
+        {job.result != null && (
+          <div className="drawer-section">
+            <div className="section-title"><h3>Result</h3><span>JSON</span></div>
+            <pre className="json-block">{JSON.stringify(job.result, null, 2)}</pre>
+          </div>
+        )}
         <div className="drawer-section attempts-section">
           <div className="section-title"><h3>Attempts</h3><span>{attemptsLoading ? 'Loading...' : attempts.length}</span></div>
           {attemptsError && <div className="inline-error" role="alert">{attemptsError}</div>}

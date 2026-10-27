@@ -1,5 +1,7 @@
 package com.example.jobqueue.api;
 
+import com.example.jobqueue.clients.ClientNotFoundException;
+import com.example.jobqueue.limits.LimitNotFoundException;
 import com.example.jobqueue.schedule.InvalidScheduleException;
 import com.example.jobqueue.schedule.ScheduleNotFoundException;
 import java.util.Map;
@@ -14,7 +16,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler({JobNotFoundException.class, ScheduleNotFoundException.class})
+    @ExceptionHandler({JobNotFoundException.class, ScheduleNotFoundException.class, LimitNotFoundException.class,
+            ClientNotFoundException.class})
     public ProblemDetail notFound(RuntimeException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
     }

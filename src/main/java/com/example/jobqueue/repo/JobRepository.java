@@ -3,7 +3,6 @@ package com.example.jobqueue.repo;
 import com.example.jobqueue.domain.Job;
 import com.example.jobqueue.domain.JobAttempt;
 import com.example.jobqueue.domain.JobStatus;
-import com.example.jobqueue.worker.ConcurrencyLimits;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,15 +33,10 @@ public class JobRepository {
 
     public Job insert(UUID id, String type, JsonNode payload,
                       int priority, int delaySeconds, int maxAttempts) {
-        return insert(id, type, payload, priority, delaySeconds, maxAttempts, null);
-    }
-
-    public Job insert(UUID id, String type, JsonNode payload,
-                      int priority, int delaySeconds, int maxAttempts, String clientId) {
         return jdbc.sql("""
-                INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts, client_id)
+                INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts)
                 VALUES (:id, :type, CAST(:payload AS jsonb), 'PENDING', :priority,
-                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :clientId)
+                        now() + (:delay * INTERVAL '1 second'), :maxAttempts)
                 RETURNING *
                 """)
                 .param("id", id)
@@ -51,7 +45,6 @@ public class JobRepository {
                 .param("priority", priority)
                 .param("delay", delaySeconds)
                 .param("maxAttempts", maxAttempts)
-                .param("clientId", clientId)
                 .query(this::map)
                 .single();
     }
@@ -86,17 +79,11 @@ public class JobRepository {
      */
     public Optional<Job> insertIdempotent(UUID id, String idempotencyKey, String requestHash, String type,
                                           JsonNode payload, int priority, int delaySeconds, int maxAttempts) {
-        return insertIdempotent(id, idempotencyKey, requestHash, type, payload, priority, delaySeconds, maxAttempts, null);
-    }
-
-    public Optional<Job> insertIdempotent(UUID id, String idempotencyKey, String requestHash, String type,
-                                          JsonNode payload, int priority, int delaySeconds, int maxAttempts,
-                                          String clientId) {
         return jdbc.sql("""
                 INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts,
-                                  idempotency_key, request_hash, client_id)
+                                  idempotency_key, request_hash)
                 VALUES (:id, :type, CAST(:payload AS jsonb), 'PENDING', :priority,
-                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :key, :hash, :clientId)
+                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :key, :hash)
                 ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
                 RETURNING *
                 """)
@@ -108,7 +95,6 @@ public class JobRepository {
                 .param("maxAttempts", maxAttempts)
                 .param("key", idempotencyKey)
                 .param("hash", requestHash)
-                .param("clientId", clientId)
                 .query(this::map)
                 .optional();
     }
@@ -158,41 +144,24 @@ public class JobRepository {
      * FOR UPDATE SKIP LOCKED lets many workers poll at once: a row locked by another
      * worker is skipped instead of waited on, so no job is ever handed out twice.
      * Retries re-enter here too: a job waiting out its backoff has run_at in the future.
-     *
-     * <p>When {@code limits} is non-empty, job types that have already reached their maximum
-     * simultaneous RUNNING count are skipped. The limit check is a correlated sub-select so it is
-     * evaluated inside the same snapshot as the SKIP LOCKED scan — no separate round trip needed.
      */
-    public Optional<Job> claimNext(String workerId, ConcurrencyLimits limits) {
-        String concurrencyFilter = limits.isEmpty() ? "" : """
-                  AND NOT (
-                      CAST(:limits AS jsonb) ? j.type
-                      AND (SELECT count(*) FROM jobs r WHERE r.type = j.type AND r.status = 'RUNNING')
-                          >= (CAST(:limits AS jsonb) ->> j.type)::int
-                  )
-                """;
+    public Optional<Job> claimNext(String workerId) {
         return jdbc.sql("""
                 UPDATE jobs
                 SET status = 'RUNNING', locked_by = :worker, locked_at = now(),
                     attempts = attempts + 1, updated_at = now()
                 WHERE id = (
-                    SELECT j.id FROM jobs j
-                    WHERE j.status = 'PENDING' AND j.run_at <= now()
-                """ + concurrencyFilter + """
-                    ORDER BY j.priority DESC, j.run_at
+                    SELECT id FROM jobs
+                    WHERE status = 'PENDING' AND run_at <= now()
+                    ORDER BY priority DESC, run_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 RETURNING *
                 """)
                 .param("worker", workerId)
-                .param("limits", limits.toJsonb())
                 .query(this::map)
                 .optional();
-    }
-
-    public Optional<Job> claimNext(String workerId) {
-        return claimNext(workerId, new ConcurrencyLimits(null));
     }
 
     public long startAttempt(UUID jobId, String workerId) {
@@ -222,6 +191,11 @@ public class JobRepository {
      * (status RUNNING and locked_by = worker). If the reaper reclaimed the job in the
      * meantime, a late result from a slow worker is ignored and 0 rows are updated.
      */
+    public int markSucceeded(UUID id, String workerId) {
+        return markSucceeded(id, workerId, null);
+    }
+
+    /** Marks the job SUCCEEDED and stores the handler's result (null = no result). */
     public int markSucceeded(UUID id, String workerId, JsonNode result) {
         return jdbc.sql("""
                 UPDATE jobs SET status = 'SUCCEEDED', last_error = NULL,
@@ -233,10 +207,6 @@ public class JobRepository {
                 .param("worker", workerId)
                 .param("result", result == null ? null : result.toString())
                 .update();
-    }
-
-    public int markSucceeded(UUID id, String workerId) {
-        return markSucceeded(id, workerId, null);
     }
 
     /** Failure with attempts left: back to PENDING, but not due until the backoff has passed. */
@@ -255,22 +225,16 @@ public class JobRepository {
     }
 
     /** Failure with no attempts left: dead-letter state. The job stays in the table for inspection. */
-    public int markDead(UUID id, String workerId, String error, JsonNode errorDetail) {
+    public int markDead(UUID id, String workerId, String error) {
         return jdbc.sql("""
                 UPDATE jobs SET status = 'DEAD', last_error = :error,
-                    error_detail = CAST(:errorDetail AS jsonb),
                     locked_by = NULL, locked_at = NULL, updated_at = now()
                 WHERE id = :id AND status = 'RUNNING' AND locked_by = :worker
                 """)
                 .param("id", id)
                 .param("worker", workerId)
                 .param("error", error)
-                .param("errorDetail", errorDetail == null ? null : errorDetail.toString())
                 .update();
-    }
-
-    public int markDead(UUID id, String workerId, String error) {
-        return markDead(id, workerId, error, null);
     }
 
     /**
@@ -308,9 +272,9 @@ public class JobRepository {
     public record RecentStats(long succeededLastMinute, Double oldestDuePendingSeconds) {
     }
 
-    public List<Job> list(JobStatus status, String type, String clientId, int limit, int offset) {
+    public List<Job> list(JobStatus status, String type, int limit, int offset) {
         Map<String, Object> params = new LinkedHashMap<>();
-        String where = buildWhere(status, type, clientId, params);
+        String where = buildWhere(status, type, params);
         return jdbc.sql("SELECT * FROM jobs" + where
                         + " ORDER BY created_at DESC, id LIMIT :limit OFFSET :offset")
                 .params(params)
@@ -320,26 +284,17 @@ public class JobRepository {
                 .list();
     }
 
-    public List<Job> list(JobStatus status, String type, int limit, int offset) {
-        return list(status, type, null, limit, offset);
-    }
-
-    public long count(JobStatus status, String type, String clientId) {
+    public long count(JobStatus status, String type) {
         Map<String, Object> params = new LinkedHashMap<>();
-        String where = buildWhere(status, type, clientId, params);
+        String where = buildWhere(status, type, params);
         return jdbc.sql("SELECT count(*) FROM jobs" + where)
                 .params(params)
                 .query(Long.class)
                 .single();
     }
 
-    public long count(JobStatus status, String type) {
-        return count(status, type, null);
-    }
-
     // only constant SQL fragments are appended here; every value goes through a bind parameter
-    private static String buildWhere(JobStatus status, String type, String clientId,
-                                     Map<String, Object> params) {
+    private static String buildWhere(JobStatus status, String type, Map<String, Object> params) {
         StringBuilder where = new StringBuilder(" WHERE 1 = 1");
         if (status != null) {
             where.append(" AND status = :status");
@@ -348,10 +303,6 @@ public class JobRepository {
         if (type != null && !type.isBlank()) {
             where.append(" AND type = :type");
             params.put("type", type);
-        }
-        if (clientId != null && !clientId.isBlank()) {
-            where.append(" AND client_id = :clientId");
-            params.put("clientId", clientId);
         }
         return where.toString();
     }
@@ -509,12 +460,22 @@ public class JobRepository {
                 .update();
     }
 
+    /** Jobs per type, most common first (used by the report job). */
+    public Map<String, Long> countsByType() {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        jdbc.sql("SELECT type, count(*) AS n FROM jobs GROUP BY type ORDER BY n DESC, type LIMIT 20")
+                .query((rs, i) -> Map.entry(rs.getString("type"), rs.getLong("n")))
+                .list()
+                .forEach(e -> counts.put(e.getKey(), e.getValue()));
+        return counts;
+    }
+
     // ------------------------------------------------------------------- mapping
 
     private Job map(ResultSet rs, int rowNum) throws SQLException {
         try {
             String resultJson = rs.getString("result");
-            String errorDetailJson = rs.getString("error_detail");
+            JsonNode result = resultJson == null ? null : mapper.readTree(resultJson);
             return new Job(
                     rs.getObject("id", UUID.class),
                     rs.getString("type"),
@@ -530,11 +491,9 @@ public class JobRepository {
                     rs.getObject("schedule_id", UUID.class),
                     rs.getString("idempotency_key"),
                     rs.getBoolean("cancel_requested"),
-                    resultJson == null ? null : mapper.readTree(resultJson),
-                    errorDetailJson == null ? null : mapper.readTree(errorDetailJson),
-                    rs.getString("client_id"));
+                    result);
         } catch (JsonProcessingException e) {
-            throw new SQLException("Invalid JSON in database", e);
+            throw new SQLException("Invalid JSON payload in database", e);
         }
     }
 

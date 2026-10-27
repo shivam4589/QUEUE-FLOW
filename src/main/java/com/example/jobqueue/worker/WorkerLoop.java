@@ -3,6 +3,7 @@ package com.example.jobqueue.worker;
 import com.example.jobqueue.domain.Job;
 import com.example.jobqueue.repo.JobRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PreDestroy;
@@ -42,6 +43,7 @@ public class WorkerLoop {
 
     private static final Logger log = LoggerFactory.getLogger(WorkerLoop.class);
     private static final int MAX_ERROR_LENGTH = 2000;
+    private static final int MAX_RESULT_CHARS = 65_536;
     private static final long MIN_IDLE_WAIT_MS = 100;
 
     private final JobRepository repository;
@@ -52,7 +54,6 @@ public class WorkerLoop {
     private final WakeSignal wake;
     private final JobNotifier notifier;
     private final InFlightJobs inFlight;
-    private final ConcurrencyLimits concurrencyLimits;
 
     private ExecutorService executor;
     private volatile boolean running;
@@ -67,7 +68,6 @@ public class WorkerLoop {
         this.wake = wake;
         this.notifier = notifier;
         this.inFlight = inFlight;
-        this.concurrencyLimits = new ConcurrencyLimits(props.typeConcurrency());
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -80,9 +80,7 @@ public class WorkerLoop {
             String workerId = prefix + "-t" + i;
             executor.submit(() -> runLoop(workerId));
         }
-        log.info("Worker started: {} thread(s), poll interval {} ms, type-concurrency limits: {}",
-                threads, props.pollIntervalMs(),
-                concurrencyLimits.isEmpty() ? "none" : concurrencyLimits.asMap());
+        log.info("Worker started: {} thread(s), poll interval {} ms", threads, props.pollIntervalMs());
     }
 
     @PreDestroy
@@ -108,7 +106,7 @@ public class WorkerLoop {
         while (running) {
             try {
                 long seen = wake.generation(); // read BEFORE looking for work so a wake-up cannot be missed
-                Optional<Job> claimed = repository.claimNext(workerId, concurrencyLimits);
+                Optional<Job> claimed = repository.claimNext(workerId);
                 if (claimed.isPresent()) {
                     execute(claimed.get(), workerId);
                 } else {
@@ -153,12 +151,15 @@ public class WorkerLoop {
 
             Timer.Sample sample = Timer.start(meters);
             Exception handlerError = null;
-            JsonNode handlerResult = null;
-            JobHandler handler = null;
+            JsonNode result = null;
             try {
-                handler = registry.find(job.type()).orElseThrow(
+                JobHandler handler = registry.find(job.type()).orElseThrow(
                         () -> new IllegalStateException("No handler registered for job type " + job.type()));
-                handlerResult = handler.handle(job);
+                if (handler instanceof ResultJobHandler resultHandler) {
+                    result = resultHandler.run(job);
+                } else {
+                    handler.handle(job);
+                }
             } catch (Exception e) {
                 handlerError = e;
             }
@@ -176,7 +177,7 @@ public class WorkerLoop {
             if (handlerError == null) {
                 // finished normally, even if cancellation arrived in the meantime: the work is done
                 repository.finishAttempt(attemptId, true, null);
-                if (repository.markSucceeded(job.id(), workerId, handlerResult) == 0) {
+                if (repository.markSucceeded(job.id(), workerId, capResult(result)) == 0) {
                     log.warn("Job {} finished but this worker no longer holds its lock (reclaimed by the reaper?)",
                             job.id());
                 } else {
@@ -194,8 +195,7 @@ public class WorkerLoop {
                     log.info("Job {} ({}) was cancelled while running on {}", job.id(), job.type(), workerId);
                 }
             } else {
-                handleFailure(job, workerId, attemptId, truncate(handlerError.toString()),
-                        handler, handlerError);
+                handleFailure(job, workerId, attemptId, truncate(handlerError.toString()));
             }
         } finally {
             inFlight.remove(job.id());
@@ -205,12 +205,10 @@ public class WorkerLoop {
         }
     }
 
-    private void handleFailure(Job job, String workerId, long attemptId, String error,
-                               JobHandler handler, Exception lastException) {
+    private void handleFailure(Job job, String workerId, long attemptId, String error) {
         repository.finishAttempt(attemptId, false, error);
         if (job.attempts() >= job.maxAttempts()) {
-            JsonNode errorDetail = handler != null ? handler.errorDetail(job, lastException) : null;
-            repository.markDead(job.id(), workerId, error, errorDetail);
+            repository.markDead(job.id(), workerId, error);
             meters.counter("jobqueue.job.dead", "type", job.type()).increment();
             log.error("Job {} ({}) is DEAD after {} attempts: {}",
                     job.id(), job.type(), job.attempts(), error);
@@ -249,6 +247,20 @@ public class WorkerLoop {
                 .maximumExpectedValue(Duration.ofMinutes(10))
                 .register(meters)
                 .record(wait);
+    }
+
+    /** Results are kept small: an oversized one is replaced by a short summary. */
+    private static JsonNode capResult(JsonNode result) {
+        if (result == null) {
+            return null;
+        }
+        String text = result.toString();
+        if (text.length() <= MAX_RESULT_CHARS) {
+            return result;
+        }
+        return JsonNodeFactory.instance.objectNode()
+                .put("truncated", true)
+                .put("sizeCharacters", text.length());
     }
 
     private static String truncate(String s) {
