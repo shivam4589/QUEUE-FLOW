@@ -19,5 +19,6 @@ public record Job(
         UUID scheduleId,
         String idempotencyKey,
         boolean cancelRequested,
-        JsonNode result) {
+        JsonNode result,
+        UUID clientId) {
 }

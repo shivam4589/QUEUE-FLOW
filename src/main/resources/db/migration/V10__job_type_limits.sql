@@ -6,5 +6,4 @@ CREATE TABLE job_type_limits (
     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- counting the running jobs of one type must be cheap
 CREATE INDEX idx_jobs_running_type ON jobs (type) WHERE status = 'RUNNING';

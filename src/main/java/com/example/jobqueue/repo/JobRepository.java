@@ -33,10 +33,16 @@ public class JobRepository {
 
     public Job insert(UUID id, String type, JsonNode payload,
                       int priority, int delaySeconds, int maxAttempts) {
+        return insert(id, type, payload, priority, delaySeconds, maxAttempts, null);
+    }
+
+    /** Same, recording which API client submitted the job (null = submitted without an API key). */
+    public Job insert(UUID id, String type, JsonNode payload,
+                      int priority, int delaySeconds, int maxAttempts, UUID clientId) {
         return jdbc.sql("""
-                INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts)
+                INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts, client_id)
                 VALUES (:id, :type, CAST(:payload AS jsonb), 'PENDING', :priority,
-                        now() + (:delay * INTERVAL '1 second'), :maxAttempts)
+                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :clientId)
                 RETURNING *
                 """)
                 .param("id", id)
@@ -45,6 +51,7 @@ public class JobRepository {
                 .param("priority", priority)
                 .param("delay", delaySeconds)
                 .param("maxAttempts", maxAttempts)
+                .param("clientId", clientId)
                 .query(this::map)
                 .single();
     }
@@ -78,13 +85,14 @@ public class JobRepository {
      * exactly one inserts, the others see the conflict.
      */
     public Optional<Job> insertIdempotent(UUID id, String idempotencyKey, String requestHash, String type,
-                                          JsonNode payload, int priority, int delaySeconds, int maxAttempts) {
+                                          JsonNode payload, int priority, int delaySeconds, int maxAttempts,
+                                          UUID clientId) {
         return jdbc.sql("""
                 INSERT INTO jobs (id, type, payload, status, priority, run_at, max_attempts,
-                                  idempotency_key, request_hash)
+                                  idempotency_key, request_hash, client_id)
                 VALUES (:id, :type, CAST(:payload AS jsonb), 'PENDING', :priority,
-                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :key, :hash)
-                ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+                        now() + (:delay * INTERVAL '1 second'), :maxAttempts, :key, :hash, :clientId)
+                ON CONFLICT (idempotency_scope, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
                 RETURNING *
                 """)
                 .param("id", id)
@@ -95,13 +103,19 @@ public class JobRepository {
                 .param("maxAttempts", maxAttempts)
                 .param("key", idempotencyKey)
                 .param("hash", requestHash)
+                .param("clientId", clientId)
                 .query(this::map)
                 .optional();
     }
 
-    public Optional<StoredJob> findByIdempotencyKey(String idempotencyKey) {
-        return jdbc.sql("SELECT * FROM jobs WHERE idempotency_key = :key")
+    /** Scope used for idempotency keys of anonymous submissions; matches the generated column in the database. */
+    private static final UUID NO_CLIENT = new UUID(0L, 0L);
+
+    /** Looks a key up within one client's scope (null = anonymous submissions). */
+    public Optional<StoredJob> findByIdempotencyKey(String idempotencyKey, UUID clientId) {
+        return jdbc.sql("SELECT * FROM jobs WHERE idempotency_key = :key AND idempotency_scope = :scope")
                 .param("key", idempotencyKey)
+                .param("scope", clientId == null ? NO_CLIENT : clientId)
                 .query((rs, i) -> new StoredJob(map(rs, i), rs.getString("request_hash")))
                 .optional();
     }
@@ -470,6 +484,49 @@ public class JobRepository {
         return counts;
     }
 
+    // ------------------------------------------------ concurrency limits per job type
+
+    /** Key of the advisory lock that serialises limit-aware claims. */
+    private static final long CLAIM_LOCK_KEY = 7_305_102L;
+
+    /** Takes the claim lock for the rest of the current transaction (call inside a transaction). */
+    public void lockClaims() {
+        jdbc.sql("SELECT pg_advisory_xact_lock(:key)")
+                .param("key", CLAIM_LOCK_KEY)
+                .query((rs, i) -> 1)
+                .list();
+    }
+
+    /**
+     * Like claimNext, but skips job types that already have max_concurrent jobs running. Because claims are
+     * serialised by lockClaims() and the claim commits before the lock is released, the running count it sees is
+     * always up to date, so a limit is never exceeded.
+     */
+    public Optional<Job> claimNextWithLimits(String workerId) {
+        return jdbc.sql("""
+                WITH saturated AS (
+                    SELECT l.job_type FROM job_type_limits l
+                    WHERE (SELECT count(*) FROM jobs r
+                           WHERE r.type = l.job_type AND r.status = 'RUNNING') >= l.max_concurrent
+                )
+                UPDATE jobs
+                SET status = 'RUNNING', locked_by = :worker, locked_at = now(),
+                    attempts = attempts + 1, updated_at = now()
+                WHERE id = (
+                    SELECT id FROM jobs
+                    WHERE status = 'PENDING' AND run_at <= now()
+                      AND type NOT IN (SELECT job_type FROM saturated)
+                    ORDER BY priority DESC, run_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                RETURNING *
+                """)
+                .param("worker", workerId)
+                .query(this::map)
+                .optional();
+    }
+
     // ------------------------------------------------------------------- mapping
 
     private Job map(ResultSet rs, int rowNum) throws SQLException {
@@ -491,7 +548,8 @@ public class JobRepository {
                     rs.getObject("schedule_id", UUID.class),
                     rs.getString("idempotency_key"),
                     rs.getBoolean("cancel_requested"),
-                    result);
+                    result,
+                    rs.getObject("client_id", UUID.class));
         } catch (JsonProcessingException e) {
             throw new SQLException("Invalid JSON payload in database", e);
         }
