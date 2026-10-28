@@ -57,10 +57,9 @@ class LockHeartbeatEndToEndTest {
         }
 
         @Override
-        public com.fasterxml.jackson.databind.JsonNode handle(Job job) throws Exception {
+        public void handle(Job job) throws Exception {
             runs.incrementAndGet();
             Thread.sleep(6000);
-            return null;
         }
     }
 
