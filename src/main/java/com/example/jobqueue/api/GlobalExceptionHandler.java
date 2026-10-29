@@ -6,8 +6,10 @@ import com.example.jobqueue.schedule.InvalidScheduleException;
 import com.example.jobqueue.schedule.ScheduleNotFoundException;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -35,6 +37,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({InvalidScheduleException.class, InvalidIdempotencyKeyException.class})
     public ProblemDetail badRequest(RuntimeException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(QuotaExceededException.class)
+    public ResponseEntity<ProblemDetail> quotaExceeded(QuotaExceededException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()))
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

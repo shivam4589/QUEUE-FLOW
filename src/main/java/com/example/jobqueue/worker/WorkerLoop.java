@@ -54,12 +54,14 @@ public class WorkerLoop {
     private final WakeSignal wake;
     private final JobNotifier notifier;
     private final InFlightJobs inFlight;
+    private final ClaimService claims;
 
     private ExecutorService executor;
     private volatile boolean running;
 
     public WorkerLoop(JobRepository repository, JobHandlerRegistry registry, WorkerProperties props,
-                      MeterRegistry meters, WakeSignal wake, JobNotifier notifier, InFlightJobs inFlight) {
+                      MeterRegistry meters, WakeSignal wake, JobNotifier notifier, InFlightJobs inFlight,
+                      ClaimService claims) {
         this.repository = repository;
         this.registry = registry;
         this.props = props;
@@ -68,6 +70,7 @@ public class WorkerLoop {
         this.wake = wake;
         this.notifier = notifier;
         this.inFlight = inFlight;
+        this.claims = claims;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -106,7 +109,7 @@ public class WorkerLoop {
         while (running) {
             try {
                 long seen = wake.generation(); // read BEFORE looking for work so a wake-up cannot be missed
-                Optional<Job> claimed = repository.claimNext(workerId);
+                Optional<Job> claimed = claims.claimNext(workerId);
                 if (claimed.isPresent()) {
                     execute(claimed.get(), workerId);
                 } else {

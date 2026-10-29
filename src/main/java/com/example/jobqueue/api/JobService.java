@@ -1,5 +1,7 @@
 package com.example.jobqueue.api;
 
+import com.example.jobqueue.clients.ClientLimits;
+import com.example.jobqueue.clients.ClientRepository;
 import com.example.jobqueue.domain.Job;
 import com.example.jobqueue.domain.JobAttempt;
 import com.example.jobqueue.domain.JobStats;
@@ -11,6 +13,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,6 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class JobService {
@@ -28,11 +35,16 @@ public class JobService {
     private static final Pattern IDEMPOTENCY_KEY = Pattern.compile("[A-Za-z0-9._:~-]{1,200}");
 
     private final JobRepository repository;
+    private final ClientRepository clients;
+    private final TransactionTemplate tx;
     /** Writes JSON with object keys sorted, so the same request always produces the same bytes. */
     private final ObjectMapper canonicalMapper;
 
-    public JobService(JobRepository repository, ObjectMapper mapper) {
+    public JobService(JobRepository repository, ObjectMapper mapper, ClientRepository clients,
+                      TransactionTemplate tx) {
         this.repository = repository;
+        this.clients = clients;
+        this.tx = tx;
         this.canonicalMapper = mapper.copy().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     }
 
@@ -53,6 +65,39 @@ public class JobService {
 
     /** clientId = the API client that submitted the job (null for anonymous / admin submissions). */
     public SubmitResult submit(SubmitJobRequest req, String idempotencyKey, UUID clientId) {
+        ClientLimits limits = clientId == null ? ClientLimits.NONE : clients.findLimits(clientId).orElse(ClientLimits.NONE);
+        if (!limits.any()) {
+            return doSubmit(req, idempotencyKey, clientId);
+        }
+        // This client has limits. Its submissions are serialised, the job is created, and then the counts are
+        // checked INCLUDING the new job; if the limit is exceeded the exception rolls the insert back. That keeps
+        // the limit exact even when many requests arrive at once, and a replay of an earlier request (nothing
+        // new created) never counts against the limit.
+        return tx.execute(status -> {
+            repository.lockClient(clientId);
+            SubmitResult result = doSubmit(req, idempotencyKey, clientId);
+            if (result.created()) {
+                enforce(clientId, limits);
+            }
+            return result;
+        });
+    }
+
+    private void enforce(UUID clientId, ClientLimits limits) {
+        if (limits.ratePerMinute() != null
+                && repository.countClientJobsSince(clientId, 60) > limits.ratePerMinute()) {
+            throw new QuotaExceededException("Rate limit exceeded: this API key may submit at most "
+                    + limits.ratePerMinute() + " jobs per minute", 60);
+        }
+        if (limits.dailyQuota() != null && repository.countClientJobsToday(clientId) > limits.dailyQuota()) {
+            Instant midnight = LocalDate.now(ZoneOffset.UTC).plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+            throw new QuotaExceededException("Daily quota exceeded: this API key may submit at most "
+                    + limits.dailyQuota() + " jobs per day (UTC)",
+                    Math.max(1, Duration.between(Instant.now(), midnight).getSeconds()));
+        }
+    }
+
+    private SubmitResult doSubmit(SubmitJobRequest req, String idempotencyKey, UUID clientId) {
         int priority = req.priority() != null ? req.priority() : DEFAULT_PRIORITY;
         int delaySeconds = req.delaySeconds() != null ? req.delaySeconds() : 0;
         int maxAttempts = req.maxAttempts() != null ? req.maxAttempts() : DEFAULT_MAX_ATTEMPTS;

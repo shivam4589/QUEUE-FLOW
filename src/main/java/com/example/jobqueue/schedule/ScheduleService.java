@@ -55,6 +55,12 @@ public class ScheduleService {
         return schedules.list();
     }
 
+    /** The most recent jobs this schedule created (newest first), with their status and result. */
+    public List<Job> runs(UUID id, int limit) {
+        get(id); // 404 if the schedule does not exist
+        return jobs.listByScheduleId(id, Math.min(Math.max(limit, 1), 50));
+    }
+
     public Schedule pause(UUID id) {
         return schedules.pause(id).orElseThrow(() -> new ScheduleNotFoundException(id));
     }

@@ -55,6 +55,14 @@ public class ClientService {
         return repository.list();
     }
 
+    /** Sets the client's limits; a null value means unlimited. */
+    public ApiClient setLimits(UUID id, Integer ratePerMinute, Integer dailyQuota) {
+        if (repository.setLimits(id, ratePerMinute, dailyQuota) == 0) {
+            throw new ClientNotFoundException(id);
+        }
+        return repository.findById(id).orElseThrow(() -> new ClientNotFoundException(id));
+    }
+
     public ApiClient setEnabled(UUID id, boolean enabled) {
         if (repository.setEnabled(id, enabled) == 0) {
             throw new ClientNotFoundException(id);

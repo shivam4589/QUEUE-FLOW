@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -38,6 +39,12 @@ public class ScheduleController {
     @GetMapping("/{id}")
     public Schedule get(@PathVariable UUID id) {
         return service.get(id);
+    }
+
+    /** Recent runs of a schedule: the jobs it created, newest first (limit 1-50, default 10). */
+    @GetMapping("/{id}/runs")
+    public List<Job> runs(@PathVariable UUID id, @RequestParam(defaultValue = "10") int limit) {
+        return service.runs(id, limit);
     }
 
     @PostMapping("/{id}/pause")

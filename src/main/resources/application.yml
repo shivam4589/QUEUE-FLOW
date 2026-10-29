@@ -17,17 +17,3 @@ management:
     web:
       exposure:
         include: health,info,prometheus
-
-jobqueue:
-  worker:
-    enabled: false
-    # type-concurrency:
-    #   SEND_EMAIL: 3
-    #   SLOW: 1
-
-  # apikeys:
-  #   enabled: true
-
-  # admin:
-  #   password: ${JOBQUEUE_ADMIN_PASSWORD:}
-

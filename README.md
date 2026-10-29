@@ -19,6 +19,9 @@ Clients submit jobs over REST. A fleet of worker containers claims them safely (
 - **Job results**: a handler can return a result that is stored with the job and shown in the API and the dashboard. The built-in `GENERATE_REPORT` job type builds a summary of the queue itself.
 - **Concurrency limits per job type**: cap how many jobs of one type run at once across all workers, and the cap is exact even when many workers claim at the same moment.
 - **Per-client API keys**: each application gets its own key that can submit jobs; every job records who submitted it, keys can be disabled, and idempotency keys are scoped per client.
+- **Schedule run history**: each recurring schedule shows its recent runs with their status and results, and a click opens the job.
+- **Per-client rate limits and daily quotas**: an API client can be capped (jobs per minute, jobs per day); the limit is exact even under concurrent requests, and an over-limit submit gets `429` with `Retry-After`.
+- **A real `WEBHOOK` job type**: calls a URL with retries and backoff and stores the response as the job's result, with protections against being used to reach internal addresses.
 - **Data retention**: old finished jobs (and their attempt history) are deleted automatically in small batches.
 - **Priorities, delayed jobs, cancellation of waiting *and running* jobs** (a running job is interrupted at the worker's next heartbeat), and a full per-attempt audit trail (worker, timing, error).
 - **React dashboard**: live stats, paged and filterable job list, job details with attempts, create/cancel/retry, schedules page.
@@ -142,6 +145,8 @@ The job's attempt history then shows the lost attempt (`Worker lost: lock expire
 | `GET`, `POST`, `DELETE` | `/api/limits`, `/api/limits/{type}` | List, set (`{"type","maxConcurrent"}`) or remove a concurrency limit |
 | `POST` | `/api/clients` | Create an API client. The response contains its key, shown only once |
 | `GET` | `/api/clients` | List API clients (admin login). `POST /api/clients/{id}/disable` and `/enable` switch a key off or on |
+| `POST` | `/api/clients/{id}/limits` | Set a client's `ratePerMinute` and/or `dailyQuota` (omit or `null` = unlimited). Over-limit submissions get `429` with `Retry-After` |
+| `GET` | `/api/schedules/{id}/runs` | The most recent jobs a schedule created, newest first, with status and result (`limit` 1-50) |
 | `POST` | `/api/schedules` | Create a recurring job (5- or 6-field cron, or `@daily` style macros; IANA time zone) |
 | `GET` | `/api/schedules`, `/api/schedules/{id}` | List or read schedules |
 | `POST` | `/api/schedules/{id}/pause`, `/resume`, `/trigger` | Pause, resume, or run once now |
@@ -206,6 +211,14 @@ Limits live in a small table. While none exist, claiming is the plain `SKIP LOCK
 ### API clients
 
 A key is 256 random bits (`jq_...`); only its SHA-256 hash is stored, so a database leak does not reveal keys and a lost key cannot be recovered, only replaced. A filter in front of the API accepts either the admin login or a key; a key may only `POST /api/jobs`, and the job is stamped with the client that sent it. Idempotency keys are scoped per client by a unique index on (client, key), so two clients can reuse the same key safely.
+
+### Quotas and rate limits
+
+A client's limits are checked when it submits a job. Its submissions are serialised with a per-client advisory lock; the job is inserted, the counts (last 60 seconds, and since 00:00 UTC) are read **including** the new job, and if a limit is exceeded the exception rolls the insert back. This keeps the limit exact even when many requests arrive at the same moment (a test sends 12 at once against a limit of 5 and expects exactly 5 to succeed), and a replay of an earlier idempotent request creates nothing, so it never counts. Clients without limits skip all of this.
+
+### Webhook jobs
+
+`WEBHOOK` payload: `{"url": "https://...", "method": "POST", "headers": {...}, "body": {...}}`. Anyone who can submit a job chooses the URL, so the handler only allows `https`, refuses credentials in the URL, refuses private, loopback, link-local and cloud-metadata addresses, never follows redirects, limits headers, times out, and reads at most 64 KB of the response. A response that is not 2xx fails the attempt, so the normal retries with backoff apply. A test runs the handler against a real local HTTP server and checks each refusal.
 
 ### Delivery guarantees
 
@@ -272,6 +285,9 @@ Set as environment variables (see `docker-compose.yml`).
 | `JOBQUEUE_RETENTION_ENABLED` | `true` | Delete old finished jobs automatically |
 | `JOBQUEUE_RETENTION_SUCCEEDED_DAYS`, `..._FAILED_DAYS` | `7`, `30` | How long `SUCCEEDED`, and `DEAD` / `CANCELLED`, jobs are kept |
 | `JOBQUEUE_RETENTION_INTERVAL_MINUTES`, `..._BATCH_SIZE` | `60`, `1000` | Cleanup frequency and batch size |
+| `JOBQUEUE_WEBHOOK_ALLOW_PRIVATE_NETWORKS` | `false` | Let webhook jobs call private, loopback and link-local addresses (only for trusted setups) |
+| `JOBQUEUE_WEBHOOK_ALLOW_HTTP` | `false` | Let webhook jobs use plain `http://` |
+| `JOBQUEUE_WEBHOOK_TIMEOUT_SECONDS`, `..._MAX_RESPONSE_BYTES` | `10`, `65536` | Webhook timeout and how much of the response is read |
 | `JOBQUEUE_ADMIN_USER`, `JOBQUEUE_ADMIN_PASSWORD` | unset | When the password is set, changes under `/api` need HTTP Basic login (reading stays open) |
 | `JOBQUEUE_CORS_ALLOWED_ORIGINS` | `localhost` and `127.0.0.1`, any port | Origins allowed to call the API from a browser |
 
@@ -286,7 +302,7 @@ mvn test        # Docker must be running: integration tests start real PostgreSQ
 ```
 
 - Unit tests: backoff policy, cron parsing and time zones.
-- Integration tests against PostgreSQL (Testcontainers): the REST API, claiming under concurrency, worker end-to-end (exactly-once, retries, dead letters), retry scheduling and crash recovery, the lock heartbeat (a job longer than the lock timeout runs once), `LISTEN/NOTIFY` wake-ups, data retention, cancel/retry/stats/paging/CORS, cancelling running jobs, concurrency limits (exactness under concurrency), job results, API keys, recurring schedules (including simultaneous ticks), idempotency keys (including a race), the admin login filter, and the metrics endpoint.
+- Integration tests against PostgreSQL (Testcontainers): the REST API, claiming under concurrency, worker end-to-end (exactly-once, retries, dead letters), retry scheduling and crash recovery, the lock heartbeat (a job longer than the lock timeout runs once), `LISTEN/NOTIFY` wake-ups, data retention, cancel/retry/stats/paging/CORS, cancelling running jobs, concurrency limits (exactness under concurrency), job results, API keys, client quotas under concurrency, schedule run history, webhook calls against a local test server, recurring schedules (including simultaneous ticks), idempotency keys (including a race), the admin login filter, and the metrics endpoint.
 - GitHub Actions runs the whole suite and builds the Docker images on every push.
 
 ## Design decisions and limitations
@@ -299,6 +315,8 @@ mvn test        # Docker must be running: integration tests start real PostgreSQ
 - **Idempotency keys are scoped per API client** (anonymous submissions share one scope) and are forgotten when retention deletes the job.
 - **Concurrency limits trade some claim throughput for exactness.** While any limit exists, claims are serialised by a short database lock. Limits are per job type, not per client or per queue.
 - **API keys are minimal.** They can only submit jobs, there are no per-client quotas or rate limits, and reading the dashboard and jobs stays public.
+- **Webhook safety has one known gap.** The target address is checked and then connected to separately, so a hostile DNS server could answer differently the second time (DNS rebinding). Closing it needs pinning the connection to the checked address. A webhook that returns 4xx is retried like any other failure.
+- **Quotas count accepted jobs.** A rejected submission costs nothing, but the `Retry-After` for the per-minute limit is a conservative 60 seconds rather than the exact moment a slot frees.
 - **Retention deletes data by design.** Raise the limits (or disable it) if you need a longer history.
 - **Priorities are strict**, so a steady stream of high-priority jobs can starve low-priority ones.
 - **Authentication is minimal.** There is one optional admin login for write requests, no users or roles. CORS is limited to localhost by default.
@@ -317,7 +335,7 @@ src/main/java/com/example/jobqueue/
   limits/     concurrency limits per job type
   clients/    API clients and keys
   metrics/    QueueMetrics (Prometheus gauges)
-src/main/resources/db/migration/   Flyway migrations V1-V9
+src/main/resources/db/migration/   Flyway migrations V1-V13
 src/test/java/                     unit and integration tests
 frontend/                          React + Vite dashboard
 monitoring/                        Prometheus config, Grafana provisioning and dashboard
@@ -342,4 +360,5 @@ Dockerfile.deploy                  single-container image for hosting
 - [x] Lock heartbeat, `LISTEN/NOTIFY` wake-ups, data retention
 - [x] Cooperative cancellation of running jobs
 - [x] Per-job-type concurrency limits, job results, per-client API keys
-- [ ] Ideas: per-client quotas and rate limits, results for scheduled jobs in the schedule view, a real e-mail or webhook job type
+- [x] Per-client quotas and rate limits, results for scheduled jobs in the schedule view, a real webhook job type
+- [ ] Ideas: real e-mail delivery (needs SMTP credentials), pinning webhook connections against DNS rebinding, per-queue priorities

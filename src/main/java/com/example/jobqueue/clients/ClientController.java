@@ -35,6 +35,12 @@ public class ClientController {
         return ResponseEntity.created(URI.create("/api/clients/" + created.client().id())).body(created);
     }
 
+    /** Sets the client's rate limit and daily quota. Omitted or null values mean unlimited. */
+    @PostMapping("/{id}/limits")
+    public ApiClient setLimits(@PathVariable UUID id, @Valid @RequestBody SetClientLimitsRequest request) {
+        return service.setLimits(id, request.ratePerMinute(), request.dailyQuota());
+    }
+
     @PostMapping("/{id}/disable")
     public ApiClient disable(@PathVariable UUID id) {
         return service.setEnabled(id, false);

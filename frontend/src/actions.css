@@ -34,3 +34,11 @@
 .key-note { word-break: break-all; }
 .key-note code { font-family: 'DM Mono', monospace; font-size: 11px; color: #3d3480; }
 .key-note .button { margin-left: 8px; }
+
+/* schedule run history */
+.runs-row td { background: #fafbfd; padding: 10px 19px 14px; }
+.schedules-table tbody tr.runs-row:hover { background: #fafbfd; }
+.run-list { display: flex; flex-direction: column; gap: 6px; }
+.run-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 1px solid #eceef4; background: #fff; border-radius: 9px; padding: 7px 11px; cursor: pointer; font: inherit; }
+.run-item:hover { border-color: #cfd3e4; }
+.run-result { font-family: 'DM Mono', monospace; font-size: 11px; color: #5a5f73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

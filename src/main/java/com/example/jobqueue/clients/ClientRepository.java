@@ -12,13 +12,18 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class ClientRepository {
 
-    /** Columns without the job count (the count is only needed when listing). */
+    /** Columns without the job counts (the counts are only needed when listing). */
     private static final String BASIC_COLUMNS =
-            "id, name, key_prefix, enabled, created_at, last_used_at, CAST(0 AS bigint) AS jobs";
+            "id, name, key_prefix, enabled, created_at, last_used_at, rate_limit_per_minute, daily_quota, "
+                    + "CAST(0 AS bigint) AS jobs, CAST(0 AS bigint) AS used_today";
 
     private static final String COUNTED_COLUMNS =
             "c.id, c.name, c.key_prefix, c.enabled, c.created_at, c.last_used_at, "
-                    + "(SELECT count(*) FROM jobs j WHERE j.client_id = c.id) AS jobs";
+                    + "c.rate_limit_per_minute, c.daily_quota, "
+                    + "(SELECT count(*) FROM jobs j WHERE j.client_id = c.id) AS jobs, "
+                    + "(SELECT count(*) FROM jobs j WHERE j.client_id = c.id "
+                    + "AND j.created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) "
+                    + "AS used_today";
 
     private final JdbcClient jdbc;
 
@@ -64,6 +69,22 @@ public class ClientRepository {
                 .update();
     }
 
+    /** Sets or clears (null) the client's limits. */
+    public int setLimits(UUID id, Integer ratePerMinute, Integer dailyQuota) {
+        return jdbc.sql("UPDATE api_clients SET rate_limit_per_minute = :rate, daily_quota = :daily WHERE id = :id")
+                .param("id", id)
+                .param("rate", ratePerMinute)
+                .param("daily", dailyQuota)
+                .update();
+    }
+
+    public Optional<ClientLimits> findLimits(UUID id) {
+        return jdbc.sql("SELECT rate_limit_per_minute, daily_quota FROM api_clients WHERE id = :id")
+                .param("id", id)
+                .query((rs, i) -> new ClientLimits(nullableInt(rs, "rate_limit_per_minute"), nullableInt(rs, "daily_quota")))
+                .optional();
+    }
+
     /** Records that the key was used, at most once a minute so busy clients do not cause a write per request. */
     public void touch(UUID id) {
         jdbc.sql("""
@@ -72,6 +93,11 @@ public class ClientRepository {
                 """)
                 .param("id", id)
                 .update();
+    }
+
+    private static Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
     }
 
     private ApiClient map(ResultSet rs, int rowNum) throws SQLException {
@@ -83,6 +109,9 @@ public class ClientRepository {
                 rs.getBoolean("enabled"),
                 rs.getTimestamp("created_at").toInstant(),
                 lastUsed == null ? null : lastUsed.toInstant(),
-                rs.getLong("jobs"));
+                nullableInt(rs, "rate_limit_per_minute"),
+                nullableInt(rs, "daily_quota"),
+                rs.getLong("jobs"),
+                rs.getLong("used_today"));
     }
 }

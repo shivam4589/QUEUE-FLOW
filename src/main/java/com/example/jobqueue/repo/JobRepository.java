@@ -527,6 +527,15 @@ public class JobRepository {
                 .optional();
     }
 
+    /** The most recent jobs a schedule created, newest first. */
+    public List<Job> listByScheduleId(UUID scheduleId, int limit) {
+        return jdbc.sql("SELECT * FROM jobs WHERE schedule_id = :scheduleId ORDER BY created_at DESC LIMIT :limit")
+                .param("scheduleId", scheduleId)
+                .param("limit", limit)
+                .query(this::map)
+                .list();
+    }
+
     // ------------------------------------------------------------------- mapping
 
     private Job map(ResultSet rs, int rowNum) throws SQLException {

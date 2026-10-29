@@ -116,6 +116,7 @@ function Icon({ name, size = 18 }) {
     close: <><path d="m18 6-12 12" /><path d="m6 6 12 12" /></>,
     chevron: <path d="m9 18 6-6-6-6" />,
     chevronDown: <path d="m6 9 6 6 6-6" />,
+    key: <><circle cx="8" cy="15" r="4" /><path d="m10.8 12.2 8.7-8.7" /><path d="m16 7 3 3" /></>,
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     calendar: <><rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 10h17" /><path d="M8 3v4" /><path d="M16 3v4" /></>,
     check: <><path d="m5 12 4 4L19 6" /></>,
@@ -461,6 +462,138 @@ function SchedulesPage({ schedules, loading, error, message, onCreate, onAction 
   )
 }
 
+function ClientsPage({ clients, loading, error, message, newKey, onCreate, onToggle, onDismissKey }) {
+  const [name, setName] = useState('')
+  return (
+    <>
+      <section className="page-heading">
+        <div><span className="eyebrow">ACCESS</span><h1>API keys</h1><p>Give each client its own key. A key can submit jobs, nothing else, and every job it submits is recorded.</p></div>
+      </section>
+
+      {error && <div className="connection-error" role="alert"><Icon name="alert" size={19} /><div><strong>Couldn't load API clients</strong><span>{error}</span></div></div>}
+      {message && <div className="schedule-note" role="status">{message}</div>}
+      {newKey && (
+        <div className="schedule-note key-note" role="status">
+          <strong>Copy this key now. It is shown only once and cannot be recovered.</strong>
+          <div><code>{newKey}</code><button className="button button-secondary button-small" onClick={() => navigator.clipboard && navigator.clipboard.writeText(newKey)}>Copy</button><button className="button button-secondary button-small" onClick={onDismissKey}>Done</button></div>
+          <small>Use it as the header Authorization: Bearer KEY when you POST to /api/jobs.</small>
+        </div>
+      )}
+
+      <section className="jobs-panel">
+        <div className="panel-heading">
+          <div><div className="panel-title"><h2>Clients</h2><span className="result-count">{clients.length}</span></div><p>Only a fingerprint of each key is stored</p></div>
+        </div>
+        <form className="limit-form" onSubmit={(event) => {
+          event.preventDefault()
+          onCreate(name.trim())
+          setName('')
+        }}>
+          <input className="input-control" value={name} onChange={(event) => setName(event.target.value)} placeholder="Client name, e.g. billing-service" required maxLength={100} aria-label="Client name" />
+          <button type="submit" className="button button-primary"><Icon name="key" size={16} />Create key</button>
+        </form>
+        {loading && clients.length === 0 ? (
+          <div className="table-message"><span className="spinner" /> Loading clients...</div>
+        ) : clients.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon"><Icon name="key" size={25} /></div>
+            <strong>No API clients yet</strong>
+            <p>Create one above to get a key for an application that submits jobs.</p>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="schedules-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Key starts with</th>
+                  <th>Status</th>
+                  <th>Last used</th>
+                  <th>Jobs</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {clients.map((client) => (
+                  <tr key={client.id}>
+                    <td><span className="job-type">{client.name}</span></td>
+                    <td><code className="cron-code">{client.keyPrefix}...</code></td>
+                    <td><StatusBadge status={client.enabled ? 'ACTIVE' : 'DISABLED'} /></td>
+                    <td><span className="created-time">{relativeTime(client.lastUsedAt)}</span></td>
+                    <td><span className="attempt-count">{client.jobs}</span></td>
+                    <td><div className="schedule-actions"><button className="button button-secondary button-small" onClick={() => onToggle(client)}>{client.enabled ? 'Disable' : 'Enable'}</button></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  )
+}
+
+function LimitsPage({ limits, loading, error, message, onSave, onDelete }) {
+  const [type, setType] = useState('SLOW')
+  const [max, setMax] = useState('2')
+  return (
+    <>
+      <section className="page-heading">
+        <div><span className="eyebrow">CONTROL</span><h1>Concurrency limits</h1><p>Cap how many jobs of one type may run at the same time, across all workers.</p></div>
+      </section>
+
+      {error && <div className="connection-error" role="alert"><Icon name="alert" size={19} /><div><strong>Couldn't load limits</strong><span>{error}</span></div></div>}
+      {message && <div className="schedule-note" role="status">{message}</div>}
+
+      <section className="jobs-panel">
+        <div className="panel-heading">
+          <div><div className="panel-title"><h2>Limits</h2><span className="result-count">{limits.length}</span></div><p>Jobs of a limited type wait in the queue while its slots are taken</p></div>
+        </div>
+        <form className="limit-form" onSubmit={(event) => {
+          event.preventDefault()
+          onSave(type.trim(), Number(max))
+        }}>
+          <input className="input-control" value={type} onChange={(event) => setType(event.target.value)} placeholder="Job type, e.g. SLOW" required maxLength={100} aria-label="Job type" />
+          <input className="input-control narrow" type="number" min="1" max="1000" value={max} onChange={(event) => setMax(event.target.value)} required aria-label="Maximum running at once" />
+          <button type="submit" className="button button-primary"><Icon name="plus" size={16} />Set limit</button>
+        </form>
+        {loading && limits.length === 0 ? (
+          <div className="table-message"><span className="spinner" /> Loading limits...</div>
+        ) : limits.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon"><Icon name="sliders" size={25} /></div>
+            <strong>No limits yet</strong>
+            <p>Every job type can use all the worker threads. Add a limit above to cap one.</p>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="schedules-table">
+              <thead>
+                <tr>
+                  <th>Job type</th>
+                  <th>Max at once</th>
+                  <th>Running now</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {limits.map((limit) => (
+                  <tr key={limit.type}>
+                    <td><span className="job-type">{limit.type}</span></td>
+                    <td><span className="attempt-count">{limit.maxConcurrent}</span></td>
+                    <td><span className="attempt-count">{limit.running} / {limit.maxConcurrent}</span></td>
+                    <td><div className="schedule-actions"><button className="button button-danger button-small" onClick={() => onDelete(limit.type)}>Remove</button></div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
+  )
+}
+
 function JobDrawer({ job, attempts, attemptsLoading, attemptsError, actionBusy, actionError, onCancel, onRetry, onClose }) {
   const canCancel = (job.status === 'PENDING' || job.status === 'RUNNING') && !job.cancelRequested
   const canRetry = job.status === 'DEAD' || job.status === 'FAILED'
@@ -491,6 +624,7 @@ function JobDrawer({ job, attempts, attemptsLoading, attemptsError, actionBusy, 
           <div><span>Scheduled</span><strong>{formatDate(job.runAt)}</strong></div>
           <div><span>From schedule</span><strong>{job.scheduleId ? `#${shortId(job.scheduleId)}` : DASH}</strong></div>
           <div><span>Idempotency key</span><strong>{job.idempotencyKey ?? DASH}</strong></div>
+          <div><span>Submitted by API client</span><strong>{job.clientId ? `#${shortId(job.clientId)}` : DASH}</strong></div>
         </div>
         <div className="drawer-section">
           <div className="section-title"><h3>Payload</h3><span>JSON</span></div>
@@ -545,6 +679,15 @@ export default function App() {
   const [schedulesError, setSchedulesError] = useState('')
   const [scheduleMessage, setScheduleMessage] = useState('')
   const [scheduleModal, setScheduleModal] = useState(false)
+  const [limits, setLimits] = useState([])
+  const [limitsLoading, setLimitsLoading] = useState(true)
+  const [limitsError, setLimitsError] = useState('')
+  const [limitMessage, setLimitMessage] = useState('')
+  const [clients, setClients] = useState([])
+  const [clientsLoading, setClientsLoading] = useState(true)
+  const [clientsError, setClientsError] = useState('')
+  const [clientMessage, setClientMessage] = useState('')
+  const [newKey, setNewKey] = useState('')
   const [notice, setNotice] = useState('')
   const selectedId = selectedJob ? selectedJob.id : null
 
@@ -599,6 +742,44 @@ export default function App() {
     const interval = window.setInterval(loadSchedules, 5000)
     return () => window.clearInterval(interval)
   }, [view, loadSchedules])
+
+  const loadLimits = useCallback(async () => {
+    try {
+      setLimits(await request('/api/limits'))
+      setLimitsError('')
+    } catch (loadError) {
+      setLimitsError(loadError.message)
+    } finally {
+      setLimitsLoading(false)
+    }
+  }, [])
+
+  const loadClients = useCallback(async () => {
+    try {
+      setClients(await request('/api/clients'))
+      setClientsError('')
+    } catch (loadError) {
+      setClientsError(loadError.message)
+    } finally {
+      setClientsLoading(false)
+    }
+  }, [])
+
+  // Clients are only loaded while their page is open (listing them needs the admin login on a protected server).
+  useEffect(() => {
+    if (view !== 'clients') return undefined
+    loadClients()
+    const interval = window.setInterval(loadClients, 10000)
+    return () => window.clearInterval(interval)
+  }, [view, loadClients])
+
+  // Limits are only polled while their page is open.
+  useEffect(() => {
+    if (view !== 'limits') return undefined
+    loadLimits()
+    const interval = window.setInterval(loadLimits, 5000)
+    return () => window.clearInterval(interval)
+  }, [view, loadLimits])
 
   // While the drawer is open, keep the selected job and its attempts live.
   useEffect(() => {
@@ -692,6 +873,62 @@ export default function App() {
     loadSchedules()
   }
 
+  async function createClient(name) {
+    setClientMessage('')
+    try {
+      const created = await request('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      setNewKey(created.apiKey)
+      setClientMessage(`Created "${created.client.name}".`)
+    } catch (failure) {
+      setClientMessage(failure.message)
+    } finally {
+      loadClients()
+    }
+  }
+
+  async function toggleClient(client) {
+    setClientMessage('')
+    try {
+      await request(`/api/clients/${client.id}/${client.enabled ? 'disable' : 'enable'}`, { method: 'POST' })
+    } catch (failure) {
+      setClientMessage(failure.message)
+    } finally {
+      loadClients()
+    }
+  }
+
+  async function saveLimit(type, maxConcurrent) {
+    setLimitMessage('')
+    try {
+      await request('/api/limits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, maxConcurrent }),
+      })
+      setLimitMessage(`At most ${maxConcurrent} ${type} job(s) will run at the same time.`)
+    } catch (failure) {
+      setLimitMessage(failure.message)
+    } finally {
+      loadLimits()
+    }
+  }
+
+  async function deleteLimit(type) {
+    setLimitMessage('')
+    try {
+      await request(`/api/limits/${encodeURIComponent(type)}`, { method: 'DELETE' })
+      setLimitMessage(`${type} is no longer limited.`)
+    } catch (failure) {
+      setLimitMessage(failure.message)
+    } finally {
+      loadLimits()
+    }
+  }
+
   async function runAction(kind) {
     if (!selectedJob) return
     if (kind === 'cancel' && !window.confirm(selectedJob.status === 'RUNNING' ? 'Ask the worker to stop this running job?' : 'Cancel this job? It will not run.')) return
@@ -748,6 +985,8 @@ export default function App() {
           <button className={view === 'overview' ? 'nav-item active' : 'nav-item'} onClick={() => setView('overview')}><Icon name="grid" size={18} />Overview</button>
           <button className="nav-item" onClick={showJobs}><Icon name="layers" size={18} />Jobs<span className="nav-count">{counts.total}</span></button>
           <button className={view === 'schedules' ? 'nav-item active' : 'nav-item'} onClick={() => setView('schedules')}><Icon name="calendar" size={18} />Schedules</button>
+          <button className={view === 'limits' ? 'nav-item active' : 'nav-item'} onClick={() => setView('limits')}><Icon name="sliders" size={18} />Limits</button>
+          <button className={view === 'clients' ? 'nav-item active' : 'nav-item'} onClick={() => setView('clients')}><Icon name="key" size={18} />API keys</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="api-status"><span className={`connection-dot ${error ? 'offline' : ''}`} /><span><strong>{loading ? 'Connecting...' : error ? 'API unavailable' : 'API connected'}</strong><small>{error ? 'Check your connection' : window.location.host}</small></span></div>
@@ -757,12 +996,16 @@ export default function App() {
 
       <main className="main-content">
         <header className="topbar">
-          <div className="breadcrumbs"><span>Job Queue</span><Icon name="chevron" size={14} /><strong>{view === 'schedules' ? 'Schedules' : 'Overview'}</strong></div>
-          <div className="topbar-right"><span className="live-indicator"><span />Live updates</span><button className="icon-button refresh-button" onClick={() => (view === 'schedules' ? loadSchedules() : refresh())} aria-label="Refresh"><Icon name="refresh" /></button></div>
+          <div className="breadcrumbs"><span>Job Queue</span><Icon name="chevron" size={14} /><strong>{view === 'clients' ? 'API keys' : view === 'limits' ? 'Limits' : view === 'schedules' ? 'Schedules' : 'Overview'}</strong></div>
+          <div className="topbar-right"><span className="live-indicator"><span />Live updates</span><button className="icon-button refresh-button" onClick={() => (view === 'clients' ? loadClients() : view === 'limits' ? loadLimits() : view === 'schedules' ? loadSchedules() : refresh())} aria-label="Refresh"><Icon name="refresh" /></button></div>
         </header>
 
         <div className="page-content">
-          {view === 'schedules' ? (
+          {view === 'clients' ? (
+            <ClientsPage clients={clients} loading={clientsLoading} error={clientsError} message={clientMessage} newKey={newKey} onCreate={createClient} onToggle={toggleClient} onDismissKey={() => setNewKey('')} />
+          ) : view === 'limits' ? (
+            <LimitsPage limits={limits} loading={limitsLoading} error={limitsError} message={limitMessage} onSave={saveLimit} onDelete={deleteLimit} />
+          ) : view === 'schedules' ? (
             <SchedulesPage schedules={schedules} loading={schedulesLoading} error={schedulesError} message={scheduleMessage} onCreate={() => setScheduleModal(true)} onAction={scheduleAction} />
           ) : (
             <>
