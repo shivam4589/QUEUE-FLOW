@@ -536,6 +536,35 @@ public class JobRepository {
                 .list();
     }
 
+    // ------------------------------------------------ per-client quotas
+
+    /** Serialises the submissions of one client until the end of the current transaction. */
+    public void lockClient(UUID clientId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(:key))")
+                .param("key", "client:" + clientId)
+                .query((rs, i) -> 1)
+                .list();
+    }
+
+    /** Jobs this client submitted in the last given number of seconds (including any inserted in this transaction). */
+    public long countClientJobsSince(UUID clientId, int seconds) {
+        return jdbc.sql("SELECT count(*) FROM jobs WHERE client_id = :client "
+                        + "AND created_at > now() - (:seconds * INTERVAL '1 second')")
+                .param("client", clientId)
+                .param("seconds", seconds)
+                .query(Long.class)
+                .single();
+    }
+
+    /** Jobs this client submitted since 00:00 UTC today. */
+    public long countClientJobsToday(UUID clientId) {
+        return jdbc.sql("SELECT count(*) FROM jobs WHERE client_id = :client "
+                        + "AND created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')")
+                .param("client", clientId)
+                .query(Long.class)
+                .single();
+    }
+
     // ------------------------------------------------------------------- mapping
 
     private Job map(ResultSet rs, int rowNum) throws SQLException {

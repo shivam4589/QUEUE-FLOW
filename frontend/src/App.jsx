@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import './actions.css'
 
 const DASH = '\u2014'
@@ -399,7 +399,53 @@ function ScheduleModal({ onClose, onCreated }) {
   )
 }
 
-function SchedulesPage({ schedules, loading, error, message, onCreate, onAction }) {
+function resultSummary(run) {
+  if (run.result != null) {
+    const text = JSON.stringify(run.result)
+    return text.length > 90 ? `${text.slice(0, 90)}...` : text
+  }
+  if (run.lastError) return run.lastError.length > 90 ? `${run.lastError.slice(0, 90)}...` : run.lastError
+  return DASH
+}
+
+function SchedulesPage({ schedules, loading, error, message, onCreate, onAction, onOpenJob }) {
+  const [openId, setOpenId] = useState(null)
+  const [runs, setRuns] = useState([])
+  const [runsLoading, setRunsLoading] = useState(false)
+  const [runsError, setRunsError] = useState('')
+
+  // While a schedule's runs are shown, keep them fresh.
+  useEffect(() => {
+    if (!openId) return undefined
+    let cancelled = false
+    async function loadRuns() {
+      try {
+        const data = await request(`/api/schedules/${openId}/runs?limit=8`)
+        if (!cancelled) {
+          setRuns(data)
+          setRunsError('')
+        }
+      } catch (loadError) {
+        if (!cancelled) setRunsError(loadError.message)
+      } finally {
+        if (!cancelled) setRunsLoading(false)
+      }
+    }
+    setRunsLoading(true)
+    loadRuns()
+    const interval = window.setInterval(loadRuns, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [openId])
+
+  function toggleRuns(schedule) {
+    setRuns([])
+    setRunsError('')
+    setOpenId(openId === schedule.id ? null : schedule.id)
+  }
+
   return (
     <>
       <section className="page-heading">
@@ -438,7 +484,8 @@ function SchedulesPage({ schedules, loading, error, message, onCreate, onAction 
               </thead>
               <tbody>
                 {schedules.map((schedule) => (
-                  <tr key={schedule.id}>
+                  <Fragment key={schedule.id}>
+                  <tr>
                     <td><div className="job-cell"><span className="job-type">{schedule.name}</span><span className="job-id">{schedule.type}</span></div></td>
                     <td><div className="job-cell"><code className="cron-code">{schedule.cron}</code><span className="job-id">{schedule.timezone}</span></div></td>
                     <td><span className="created-time">{schedule.enabled ? relativeTime(schedule.nextRunAt) : DASH}</span></td>
@@ -446,12 +493,37 @@ function SchedulesPage({ schedules, loading, error, message, onCreate, onAction 
                     <td><StatusBadge status={schedule.enabled ? 'ACTIVE' : 'PAUSED'} /></td>
                     <td>
                       <div className="schedule-actions">
+                        <button className="button button-secondary button-small" onClick={() => toggleRuns(schedule)}>{openId === schedule.id ? 'Hide runs' : 'Runs'}</button>
                         <button className="button button-secondary button-small" onClick={() => onAction('trigger', schedule)}>Run now</button>
                         <button className="button button-secondary button-small" onClick={() => onAction(schedule.enabled ? 'pause' : 'resume', schedule)}>{schedule.enabled ? 'Pause' : 'Resume'}</button>
                         <button className="button button-danger button-small" onClick={() => onAction('delete', schedule)}>Delete</button>
                       </div>
                     </td>
                   </tr>
+                  {openId === schedule.id && (
+                    <tr className="runs-row">
+                      <td colSpan={6}>
+                        {runsError ? (
+                          <span className="form-error">{runsError}</span>
+                        ) : runsLoading && runs.length === 0 ? (
+                          <span className="table-message"><span className="spinner" /> Loading runs...</span>
+                        ) : runs.length === 0 ? (
+                          <span className="created-time">No runs yet. Use "Run now" to create one.</span>
+                        ) : (
+                          <div className="run-list">
+                            {runs.map((run) => (
+                              <button key={run.id} className="run-item" onClick={() => onOpenJob(run)}>
+                                <StatusBadge status={run.status} />
+                                <span className="created-time">{relativeTime(run.createdAt)}</span>
+                                <code className="run-result">{resultSummary(run)}</code>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -462,7 +534,7 @@ function SchedulesPage({ schedules, loading, error, message, onCreate, onAction 
   )
 }
 
-function ClientsPage({ clients, loading, error, message, newKey, onCreate, onToggle, onDismissKey }) {
+function ClientsPage({ clients, loading, error, message, newKey, onCreate, onToggle, onLimits, onDismissKey }) {
   const [name, setName] = useState('')
   return (
     <>
@@ -510,6 +582,8 @@ function ClientsPage({ clients, loading, error, message, newKey, onCreate, onTog
                   <th>Status</th>
                   <th>Last used</th>
                   <th>Jobs</th>
+                  <th>Rate limit</th>
+                  <th>Daily quota</th>
                   <th aria-label="Actions" />
                 </tr>
               </thead>
@@ -521,7 +595,9 @@ function ClientsPage({ clients, loading, error, message, newKey, onCreate, onTog
                     <td><StatusBadge status={client.enabled ? 'ACTIVE' : 'DISABLED'} /></td>
                     <td><span className="created-time">{relativeTime(client.lastUsedAt)}</span></td>
                     <td><span className="attempt-count">{client.jobs}</span></td>
-                    <td><div className="schedule-actions"><button className="button button-secondary button-small" onClick={() => onToggle(client)}>{client.enabled ? 'Disable' : 'Enable'}</button></div></td>
+                    <td><span className="created-time">{client.ratePerMinute ? `${client.ratePerMinute} / min` : 'unlimited'}</span></td>
+                    <td><span className="created-time">{client.dailyQuota ? `${client.usedToday} / ${client.dailyQuota}` : `${client.usedToday} today`}</span></td>
+                    <td><div className="schedule-actions"><button className="button button-secondary button-small" onClick={() => onLimits(client)}>Limits</button><button className="button button-secondary button-small" onClick={() => onToggle(client)}>{client.enabled ? 'Disable' : 'Enable'}</button></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -890,6 +966,33 @@ export default function App() {
     }
   }
 
+  async function setClientLimits(client) {
+    const rateText = window.prompt(`Jobs per minute for "${client.name}" (leave empty for unlimited)`, String(client.ratePerMinute ?? ''))
+    if (rateText === null) return
+    const dailyText = window.prompt('Jobs per day, counted in UTC (leave empty for unlimited)', String(client.dailyQuota ?? ''))
+    if (dailyText === null) return
+    const toNumber = (text) => (text.trim() === '' ? null : Number(text))
+    const ratePerMinute = toNumber(rateText)
+    const dailyQuota = toNumber(dailyText)
+    if ([ratePerMinute, dailyQuota].some((value) => value !== null && (!Number.isInteger(value) || value < 1))) {
+      setClientMessage('Limits must be whole numbers of 1 or more, or empty for unlimited.')
+      return
+    }
+    setClientMessage('')
+    try {
+      await request(`/api/clients/${client.id}/limits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ratePerMinute, dailyQuota }),
+      })
+      setClientMessage(`Limits saved for "${client.name}".`)
+    } catch (failure) {
+      setClientMessage(failure.message)
+    } finally {
+      loadClients()
+    }
+  }
+
   async function toggleClient(client) {
     setClientMessage('')
     try {
@@ -1002,11 +1105,11 @@ export default function App() {
 
         <div className="page-content">
           {view === 'clients' ? (
-            <ClientsPage clients={clients} loading={clientsLoading} error={clientsError} message={clientMessage} newKey={newKey} onCreate={createClient} onToggle={toggleClient} onDismissKey={() => setNewKey('')} />
+            <ClientsPage clients={clients} loading={clientsLoading} error={clientsError} message={clientMessage} newKey={newKey} onCreate={createClient} onToggle={toggleClient} onLimits={setClientLimits} onDismissKey={() => setNewKey('')} />
           ) : view === 'limits' ? (
             <LimitsPage limits={limits} loading={limitsLoading} error={limitsError} message={limitMessage} onSave={saveLimit} onDelete={deleteLimit} />
           ) : view === 'schedules' ? (
-            <SchedulesPage schedules={schedules} loading={schedulesLoading} error={schedulesError} message={scheduleMessage} onCreate={() => setScheduleModal(true)} onAction={scheduleAction} />
+            <SchedulesPage schedules={schedules} loading={schedulesLoading} error={schedulesError} message={scheduleMessage} onCreate={() => setScheduleModal(true)} onAction={scheduleAction} onOpenJob={openJob} />
           ) : (
             <>
               <section className="page-heading">
