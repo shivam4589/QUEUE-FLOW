@@ -205,6 +205,7 @@ function SubmitModal({ onClose, onSubmitted }) {
     setType(value)
     if (value === 'SLOW') setPayload('{\n  "seconds": 20\n}')
     else if (value === 'SEND_EMAIL') setPayload('{\n  "to": "user@example.com"\n}')
+    else if (value === 'WEBHOOK') setPayload('{\n  "url": "https://example.com/hook",\n  "method": "POST",\n  "body": { "hello": "world" }\n}')
     else setPayload('{}')
   }
 
@@ -259,7 +260,7 @@ function SubmitModal({ onClose, onSubmitted }) {
           <label className="field-label" htmlFor="job-type">Job type</label>
           <input id="job-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} placeholder="e.g. SEND_EMAIL" />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
+            {['SEND_EMAIL', 'WEBHOOK', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
             ))}
           </div>
@@ -306,6 +307,7 @@ function ScheduleModal({ onClose, onCreated }) {
     setType(value)
     if (value === 'SLOW') setPayload('{\n  "seconds": 20\n}')
     else if (value === 'SEND_EMAIL') setPayload('{\n  "to": "user@example.com"\n}')
+    else if (value === 'WEBHOOK') setPayload('{\n  "url": "https://example.com/hook",\n  "method": "POST",\n  "body": { "hello": "world" }\n}')
     else setPayload('{}')
   }
 
@@ -364,7 +366,7 @@ function ScheduleModal({ onClose, onCreated }) {
           <label className="field-label delay-label" htmlFor="schedule-type">Job type</label>
           <input id="schedule-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
+            {['SEND_EMAIL', 'WEBHOOK', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
               <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
             ))}
           </div>
