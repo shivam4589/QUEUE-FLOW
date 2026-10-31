@@ -7,6 +7,10 @@
 A distributed background-job queue built on **PostgreSQL**, with a **Spring Boot** API, horizontally scalable **worker containers**, a **React dashboard**, and **Prometheus / Grafana** monitoring.
 
 Clients submit jobs over REST. A fleet of worker containers claims them safely (no job is ever handed to two workers), retries failures with exponential backoff, parks hopeless jobs in a dead-letter state, and recovers jobs from workers that crash. Recurring jobs run on cron schedules. Everything runs with one `docker compose up`.
+Imagine you are using an online shopping website. When you place an order, the website needs to send an email, update records, and perform other tasks.
+Instead of making you wait while every task finishes, the website can put those tasks into a queue. Background workers pick them up and process them separately.
+Your project manages that process. It can retry failed jobs, schedule jobs, track their status, and display monitoring information.
+
 
 ## Features
 
