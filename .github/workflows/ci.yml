@@ -18,6 +18,15 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # The runner's Docker 29 refuses clients older than API 1.44, while the Testcontainers version managed by
+      # Spring Boot 3.3 (1.19) still asks for 1.32. Every Testcontainers test then fails with "Could not find a
+      # valid Docker environment". This tells its Docker client to use API 1.44.
+      - name: Let Testcontainers talk to the runner's Docker
+        run: echo "api.version=1.44" > ~/.docker-java.properties
+
+      - name: Show Docker version
+        run: docker version
+
       # Integration tests start real PostgreSQL containers via Testcontainers
       # (Docker is preinstalled on GitHub's Ubuntu runners).
       - name: Build and run tests
