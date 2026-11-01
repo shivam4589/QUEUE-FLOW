@@ -174,7 +174,7 @@ function JobTable({ jobs, loading, onSelect, onClear }) {
             }}>
               <td>
                 <div className="job-cell">
-                  <span className="job-type">{job.type}</span>
+                  <span className="job-type" title={job.type}>{typeLabel(job.type)}</span>
                   <span className="job-id">#{shortId(job.id)}{job.scheduleId ? ' - scheduled' : ''}</span>
                 </div>
               </td>
@@ -191,10 +191,27 @@ function JobTable({ jobs, loading, onSelect, onClear }) {
   )
 }
 
+// Friendly names and realistic example payloads for the built-in job types. The technical type (shown as a tooltip and
+// in the Job type box) is what the workers use; the name is only for people.
+const JOB_EXAMPLES = [
+  { label: 'Welcome email', type: 'SEND_EMAIL', payload: { to: 'new.customer@example.com', subject: 'Welcome to Acme!' } },
+  { label: 'Notify another service', type: 'WEBHOOK', payload: { url: 'https://httpbin.org/post', method: 'POST', body: { event: 'order.created', orderId: 1042 } } },
+  { label: 'Daily queue report', type: 'GENERATE_REPORT', payload: {} },
+  { label: 'Quick task', type: 'NOOP', payload: {} },
+  { label: 'Slow task', type: 'SLOW', payload: { seconds: 20 } },
+  { label: 'Failing task (retry demo)', type: 'ALWAYS_FAIL', payload: {} },
+]
+const TYPE_LABELS = Object.fromEntries(JOB_EXAMPLES.map((example) => [example.type, example.label]))
+const typeLabel = (type) => TYPE_LABELS[type] ?? type
+const examplePayload = (type) => {
+  const example = JOB_EXAMPLES.find((item) => item.type === type)
+  return JSON.stringify(example ? example.payload : {}, null, 2)
+}
+
 function SubmitModal({ onClose, onSubmitted }) {
   const [idempotencyKey, setIdempotencyKey] = useState('')
   const [type, setType] = useState('SEND_EMAIL')
-  const [payload, setPayload] = useState('{\n  "to": "user@example.com"\n}')
+  const [payload, setPayload] = useState(() => examplePayload('SEND_EMAIL'))
   const [priority, setPriority] = useState('5')
   const [delaySeconds, setDelaySeconds] = useState('0')
   const [maxAttempts, setMaxAttempts] = useState('5')
@@ -203,10 +220,7 @@ function SubmitModal({ onClose, onSubmitted }) {
 
   function changeType(value) {
     setType(value)
-    if (value === 'SLOW') setPayload('{\n  "seconds": 20\n}')
-    else if (value === 'SEND_EMAIL') setPayload('{\n  "to": "user@example.com"\n}')
-    else if (value === 'WEBHOOK') setPayload('{\n  "url": "https://example.com/hook",\n  "method": "POST",\n  "body": { "hello": "world" }\n}')
-    else setPayload('{}')
+    setPayload(examplePayload(value))
   }
 
   async function submit(event) {
@@ -260,8 +274,8 @@ function SubmitModal({ onClose, onSubmitted }) {
           <label className="field-label" htmlFor="job-type">Job type</label>
           <input id="job-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} placeholder="e.g. SEND_EMAIL" />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'WEBHOOK', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
-              <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
+            {JOB_EXAMPLES.map((example) => (
+              <button key={example.type} type="button" title={example.type} onClick={() => changeType(example.type)} className={type === example.type ? 'suggestion active' : 'suggestion'}>{example.label}</button>
             ))}
           </div>
 
@@ -297,7 +311,7 @@ function ScheduleModal({ onClose, onCreated }) {
   const [type, setType] = useState('SEND_EMAIL')
   const [cron, setCron] = useState('*/5 * * * *')
   const [timezone, setTimezone] = useState(browserZone())
-  const [payload, setPayload] = useState('{\n  "to": "user@example.com"\n}')
+  const [payload, setPayload] = useState(() => examplePayload('SEND_EMAIL'))
   const [priority, setPriority] = useState('5')
   const [maxAttempts, setMaxAttempts] = useState('5')
   const [submitting, setSubmitting] = useState(false)
@@ -305,10 +319,7 @@ function ScheduleModal({ onClose, onCreated }) {
 
   function changeType(value) {
     setType(value)
-    if (value === 'SLOW') setPayload('{\n  "seconds": 20\n}')
-    else if (value === 'SEND_EMAIL') setPayload('{\n  "to": "user@example.com"\n}')
-    else if (value === 'WEBHOOK') setPayload('{\n  "url": "https://example.com/hook",\n  "method": "POST",\n  "body": { "hello": "world" }\n}')
-    else setPayload('{}')
+    setPayload(examplePayload(value))
   }
 
   async function submit(event) {
@@ -366,8 +377,8 @@ function ScheduleModal({ onClose, onCreated }) {
           <label className="field-label delay-label" htmlFor="schedule-type">Job type</label>
           <input id="schedule-type" className="input-control" value={type} onChange={(event) => setType(event.target.value)} required maxLength={100} />
           <div className="type-suggestions">
-            {['SEND_EMAIL', 'WEBHOOK', 'GENERATE_REPORT', 'NOOP', 'SLOW', 'ALWAYS_FAIL'].map((suggestion) => (
-              <button key={suggestion} type="button" onClick={() => changeType(suggestion)} className={type === suggestion ? 'suggestion active' : 'suggestion'}>{suggestion}</button>
+            {JOB_EXAMPLES.map((example) => (
+              <button key={example.type} type="button" title={example.type} onClick={() => changeType(example.type)} className={type === example.type ? 'suggestion active' : 'suggestion'}>{example.label}</button>
             ))}
           </div>
 
@@ -681,7 +692,7 @@ function JobDrawer({ job, attempts, attemptsLoading, attemptsError, actionBusy, 
     }}>
       <aside className="job-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
         <div className="drawer-header">
-          <div><span className="eyebrow">JOB DETAILS</span><h2 id="drawer-title">{job.type}</h2></div>
+          <div><span className="eyebrow">{`JOB DETAILS - ${job.type}`}</span><h2 id="drawer-title">{typeLabel(job.type)}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="Close job details"><Icon name="close" /></button>
         </div>
         <div className="drawer-summary"><StatusBadge status={job.status} /><span>#{job.id}</span></div>
@@ -905,7 +916,7 @@ export default function App() {
   const visibleJobs = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return jobs
-    return jobs.filter((job) => `${job.type} ${job.id} ${job.status}`.toLowerCase().includes(query))
+    return jobs.filter((job) => `${job.type} ${typeLabel(job.type)} ${job.id} ${job.status}`.toLowerCase().includes(query))
   }, [jobs, search])
 
   const firstShown = total === 0 ? 0 : page * PAGE_SIZE + 1
